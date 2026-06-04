@@ -1,0 +1,17 @@
+# <%= @class_name %> is a Frai agent — an orchestrator that decides
+# which tasks and tools to call based on LLM responses.
+#
+# Unlike pipelines, agents are not sequential — they can loop,
+# branch, and call tools multiple times until the goal is reached.
+#
+# Register tools the agent can use:
+#   tool FetchDataTask
+#   tool AnalyzeItemTask
+#
+# To run this agent:
+#   frai exec <%= @class_name %>
+#   frai exec <%= @class_name %> "your input here"
+class <%= @class_name %> < BaseAgent
+  # tool SomeTool
+  # tool AnotherTool
+end

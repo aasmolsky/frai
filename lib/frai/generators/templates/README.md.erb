@@ -1,0 +1,24 @@
+# <%= @project_name %>
+
+Built with [Frai](https://github.com/aasmolsky/frai) — Ruby LLM framework.
+
+## Structure
+
+```
+tasks/       # single LLM calls — SomeTask.call(input)
+pipelines/   # chains of tasks
+agents/      # orchestration with tools
+tools/       # Ruby wrappers around scripts/
+scripts/     # executables in any language (stdin/stdout JSON)
+directives/  # MD+ERB prompt templates
+responses/   # LLM output parsing and validation
+config/      # frai.rb — adapter, model, api_key
+```
+
+## Usage
+
+```bash
+frai console              # interactive Ruby session
+frai exec SomeTask        # run a task from CLI
+bundle exec rspec         # run tests
+```

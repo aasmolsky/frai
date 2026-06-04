@@ -1,0 +1,63 @@
+require "frai"
+
+# BaseTask is the parent class for all tasks in this project.
+# You don't need to modify this file.
+#
+# Generate a new task with:
+#   frai generate task my_task_name
+#
+# Every task always has a main directive as its entry point:
+#   tasks/my_task_name/directives/main.md.erb
+#
+# Three levels of task definition — use whichever fits:
+#
+# 1) Convention only — framework finds main.md.erb automatically:
+#
+#      class MyTask < BaseTask
+#      end
+#
+#      MyTask.call("some text")
+#
+# 2) Explicit contract — declare params and dependencies:
+#
+#      class MyTask < BaseTask
+#        directive :main do
+#          params do
+#            required :name,     String   # raises Frai::MissingParam if absent
+#            required :category, String
+#            optional :lang,     String, default: "en"
+#          end
+#          uses :system       # another directive
+#          runs :fetch_data   # a script — result is memoized, available in directive
+#          mcp :browser       # MCP server — must be defined in mcp/browser.rb
+#        end                  # only declared MCP servers are accessible
+#      end
+#
+#      MyTask.call(name: "item", category: "things")
+#
+# 3) Reusable schemes — for complex tasks with many dependencies:
+#
+#      class MyTask < BaseTask
+#        directive :main do
+#          uses :system
+#          uses :context do
+#            include_scheme :data_gathering
+#          end
+#        end
+#
+#        scheme :data_gathering do
+#          runs :get_data
+#          runs :parse_data
+#        end
+#      end
+#
+# params block is optional:
+#   - omit it to accept any input without validation (string, hash, nil)
+#   - declare it when you want strict input validation before anything runs
+#
+# Rules:
+#   - when params are declared, validated before any directive renders or script runs
+#   - anything not declared in the directive block cannot be used in templates
+#   - violations raise a descriptive error before any LLM call is made
+class BaseTask < Frai::Task
+end
