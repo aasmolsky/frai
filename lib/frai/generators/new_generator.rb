@@ -71,10 +71,6 @@ module Frai
         File.write(dest, result)
       end
 
-      def make_executable(relative_path)
-        FileUtils.chmod(0o755, File.join(@target_dir, relative_path))
-      end
-
       def say_create(path)
         puts "  \e[32mcreate\e[0m  #{@project_name}/#{path}"
       end

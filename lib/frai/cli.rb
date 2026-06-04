@@ -4,6 +4,7 @@ require_relative "generators/task_generator"
 require_relative "generators/pipeline_generator"
 require_relative "generators/agent_generator"
 require_relative "generators/mcp_generator"
+require_relative "generators/skill_generator"
 
 module Frai
   # Command-line interface for the Frai framework.
@@ -22,7 +23,7 @@ module Frai
       Frai::Generators::NewGenerator.new(project_name).generate
     end
 
-    desc "generate TYPE NAME", "Generate a task, pipeline, agent or MCP server"
+    desc "generate TYPE NAME", "Generate a task, pipeline, agent, MCP server, or skill"
     long_desc <<~DESC
       Generates a new component with all related files.
 
@@ -31,8 +32,9 @@ module Frai
         pipeline — a sequential chain of tasks
         agent    — an orchestrator that decides which tasks and tools to call
         mcp      — an MCP server definition (for use in task directive blocks)
+        skill    — registers the project as a skill in Claude CLI, Codex CLI, and/or Cursor
 
-      Name should be in snake_case.
+      Name should be in snake_case (or match the project name for skill).
 
       Examples:
         frai generate task fetch_data
@@ -41,6 +43,7 @@ module Frai
         frai generate agent object_comparison
         frai generate mcp browser
         frai generate mcp filesystem
+        frai generate skill my_project
     DESC
     def generate(type, name)
       generator = case type
@@ -48,7 +51,8 @@ module Frai
                   when "pipeline" then Frai::Generators::PipelineGenerator
                   when "agent"    then Frai::Generators::AgentGenerator
                   when "mcp"      then Frai::Generators::McpGenerator
-                  else abort "Error: unknown type '#{type}'. Use: task, pipeline, agent, mcp"
+                  when "skill"    then Frai::Generators::SkillGenerator
+                  else abort "Error: unknown type '#{type}'. Use: task, pipeline, agent, mcp, skill"
                   end
       generator.new(name).generate
     end
