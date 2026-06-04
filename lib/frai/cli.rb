@@ -1,6 +1,7 @@
 require "thor"
 require_relative "generators/new_generator"
 require_relative "generators/task_generator"
+require_relative "generators/task_remover"
 require_relative "generators/pipeline_generator"
 require_relative "generators/agent_generator"
 require_relative "generators/mcp_generator"
@@ -96,6 +97,13 @@ module Frai
       Frai::McpServer.new.run
     end
 
+    desc "remove task TASK_NAME", "Remove a task and clean up its skill, MCP server and config entries"
+    def remove(type, task_name)
+      abort "Error: unknown type '#{type}'. Use: task" unless type == "task"
+      load_project!
+      Frai::Generators::TaskRemover.new(task_name).remove
+    end
+
     desc "exec CLASS_NAME [INPUT]", "Execute a task, pipeline or agent by class name"
     long_desc <<~DESC
       Executes a task, pipeline or agent from the current project.
@@ -115,6 +123,25 @@ module Frai
       result = Object.const_get(class_name).call(input)
       puts result
     end
+
+    map "g"  => "generate"
+    map "r"  => "remove"
+    map "c"  => "console"
+    map "s"  => "serve"
+    map "e"  => "exec"
+    map "n"  => "new"
+
+    desc "gt NAME", "Shortcut for: generate task NAME"
+    def gt(name) = generate("task", name)
+
+    desc "gp NAME", "Shortcut for: generate pipeline NAME"
+    def gp(name) = generate("pipeline", name)
+
+    desc "ga NAME", "Shortcut for: generate agent NAME"
+    def ga(name) = generate("agent", name)
+
+    desc "rt NAME", "Shortcut for: remove task NAME"
+    def rt(name) = remove("task", name)
 
     def self.exit_on_failure?
       true

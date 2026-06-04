@@ -9,8 +9,9 @@ module Frai
     class SkillGenerator
       TEMPLATES_DIR = File.expand_path("../templates/skill", __FILE__)
 
-      def initialize(project_name)
-        @project_name = project_name
+      def initialize(task_name, project_name = nil)
+        @task_name    = task_name
+        @project_name = project_name || File.basename(Dir.pwd)
         @project_root = Dir.pwd
         @clients      = detect_clients
       end
@@ -36,9 +37,9 @@ module Frai
 
       def detect_clients
         clients = []
-        clients << :claude  if claude_installed?
-        clients << :cursor  if cursor_installed?
-        clients << :codex   if codex_installed?
+        clients << :claude if claude_installed?
+        clients << :cursor if cursor_installed?
+        clients << :codex  if codex_installed?
         clients
       end
 
@@ -68,7 +69,7 @@ module Frai
       end
 
       def generate_claude_skill
-        target_dir = File.expand_path("~/.claude/skills/#{@project_name}")
+        target_dir = File.expand_path("~/.claude/skills/#{@task_name}")
         FileUtils.mkdir_p(target_dir)
         render_template("SKILL.md.erb", File.join(target_dir, "SKILL.md"))
       end
@@ -77,17 +78,22 @@ module Frai
         claude_md = File.expand_path("~/.claude/CLAUDE.md")
         FileUtils.mkdir_p(File.dirname(claude_md))
         existing = File.exist?(claude_md) ? File.read(claude_md) : ""
-        marker   = "<!-- frai:#{@project_name} -->"
+        marker   = "<!-- frai:#{@task_name} -->"
         return if existing.include?(marker)
 
         entry = <<~MD
 
           #{marker}
-          ## #{@project_name}
+          ## /#{@task_name} — token policy
 
-          - The `#{@project_name}` MCP tools are **only** available through the `/#{@project_name}` skill
-          - Never call `#{@project_name}` MCP tools directly — only when `/#{@project_name}` skill is explicitly invoked
-          - Project root: `#{@project_root}`
+          NEVER call the `#{@task_name}` MCP tool automatically or speculatively.
+          ONLY call it when ALL of the following are true:
+          1. User explicitly invoked `/#{@task_name}` skill
+          2. Input contains `param_name(value)` format
+          3. `_skill: "#{@task_name}"` is included in arguments
+
+          If format is missing → respond with format error, do NOT call the tool.
+          Unauthorized calls waste tokens and are incorrect behavior.
         MD
 
         File.write(claude_md, existing + entry)
@@ -95,12 +101,28 @@ module Frai
       end
 
       def register_claude_mcp
+        # MCP server is per-project — register only once
         cmd = "claude mcp add #{@project_name} -- frai serve --dir #{@project_root}"
         puts "  \e[33mrunning\e[0m claude mcp add #{@project_name} -- frai serve --dir #{@project_root}"
         if system(cmd)
           puts "  \e[32mupdate\e[0m  MCP server registered"
         else
-          puts "  \e[31mwarn\e[0m    Run manually: #{cmd}"
+          puts "  \e[33mskip\e[0m    MCP server already registered or failed — run manually if needed"
+        end
+        disable_claude_approvals
+      end
+
+      def disable_claude_approvals
+        settings_file = File.join(@project_root, ".claude", "settings.local.json")
+        FileUtils.mkdir_p(File.dirname(settings_file))
+        settings = File.exist?(settings_file) ? JSON.parse(File.read(settings_file)) : {}
+        settings["permissions"] ||= {}
+        settings["permissions"]["allow"] ||= []
+        pattern = "mcp__#{@project_name}__*"
+        unless settings["permissions"]["allow"].include?(pattern)
+          settings["permissions"]["allow"] << pattern
+          File.write(settings_file, JSON.pretty_generate(settings))
+          puts "  \e[32mupdate\e[0m  .claude/settings.local.json (approvals disabled)"
         end
       end
 
@@ -115,7 +137,7 @@ module Frai
       end
 
       def generate_codex_skill
-        target_dir = File.expand_path("~/.codex/skills/#{@project_name}")
+        target_dir = File.expand_path("~/.codex/skills/#{@task_name}")
         FileUtils.mkdir_p(target_dir)
         render_template("SKILL.md.erb", File.join(target_dir, "SKILL.md"))
       end
@@ -152,7 +174,7 @@ module Frai
       def update_agents_md
         agents_md = File.join(@project_root, "AGENTS.md")
         existing  = File.exist?(agents_md) ? File.read(agents_md) : ""
-        marker    = "<!-- frai:#{@project_name} -->"
+        marker    = "<!-- frai:#{@task_name} -->"
         return if existing.include?(marker)
 
         rendered = render_to_string("agents_md.erb")
@@ -185,7 +207,7 @@ module Frai
       def generate_cursor_rules
         rules_dir = File.join(@project_root, ".cursor", "rules")
         FileUtils.mkdir_p(rules_dir)
-        render_template("cursor_rules.mdc.erb", File.join(rules_dir, "#{@project_name}.mdc"))
+        render_template("cursor_rules.mdc.erb", File.join(rules_dir, "#{@task_name}.mdc"))
       end
 
       # --- shared ---
@@ -204,9 +226,9 @@ module Frai
       def print_success
         puts "  \e[32m✓\e[0m Ready!"
         puts ""
-        puts "  Claude CLI:  /#{@project_name}" if @clients.include?(:claude)
-        puts "  Codex CLI:   /#{@project_name}" if @clients.include?(:codex)
-        puts "  Cursor:      ask using @#{@project_name} context" if @clients.include?(:cursor)
+        puts "  Claude CLI:  /#{@task_name}" if @clients.include?(:claude)
+        puts "  Codex CLI:   /#{@task_name}" if @clients.include?(:codex)
+        puts "  Cursor:      ask using @#{@task_name} context" if @clients.include?(:cursor)
         puts ""
       end
     end

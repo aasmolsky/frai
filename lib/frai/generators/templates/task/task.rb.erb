@@ -1,59 +1,42 @@
 # <%= @class_name %> — single LLM call.
 #
-# Entry point is always tasks/<%= @name %>/directives/main.md.erb
+# Entry point: tasks/<%= @name %>/directives/main.md.erb
 #
-# By default the task accepts any input and passes it to the directive as `input`.
-# Add a directive block to declare dependencies and optionally validate input params.
-#
-# --- No contract (accepts anything) ---
+# Minimal — accepts any input:
 #
 #   class <%= @class_name %> < BaseTask
 #   end
 #
 #   <%= @class_name %>.call("some text")
-#   <%= @class_name %>.call(key: "value")
 #
-# --- With params validation ---
+# With params validation:
 #
 #   class <%= @class_name %> < BaseTask
 #     directive :main do
 #       params do
 #         required :name,     String   # Frai::MissingParam if absent
-#         required :category, String   # Frai::InvalidParam if wrong type
-#         optional :lang,     String, default: "en"  # applied automatically
+#         optional :lang,     String, default: "en"
 #       end
 #     end
 #   end
 #
-#   <%= @class_name %>.call(name: "item", category: "things")
+#   <%= @class_name %>.call(name: "item")
 #
-# --- With directive and script dependencies ---
+# With constants, sub-directives and scripts:
 #
 #   class <%= @class_name %> < BaseTask
+#     const :threshold, 10
+#
 #     directive :main do
 #       params do
 #         required :query, String
 #       end
-#       uses :system       # renders tasks/<%= @name %>/directives/system.md.erb
-#       runs :fetch_data   # runs tasks/<%= @name %>/scripts/fetch_data.*
-#                          # result is memoized and available in directive as fetch_data[:key]
-#       mcp :browser       # declares MCP server dependency (must exist in mcp/browser.rb)
-#     end                  # only declared MCP servers are accessible — enforced by Frai
-#   end
-#
-# --- With reusable schemes ---
-#
-#   class <%= @class_name %> < BaseTask
-#     directive :main do
-#       uses :system
-#       uses :context do
-#         include_scheme :data_gathering
+#       directive :analyze do
+#         script :fetch_data do
+#           input   String
+#           returns data: String
+#         end
 #       end
-#     end
-#
-#     scheme :data_gathering do
-#       runs :get_data
-#       runs :fetch_data
 #     end
 #   end
 #

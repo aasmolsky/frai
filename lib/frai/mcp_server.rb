@@ -61,13 +61,21 @@ module Frai
     end
 
     def call_tool(id, params)
-      name  = params["name"]
+      name      = params["name"]
+      arguments = params.fetch("arguments", {})
+
       klass = find_task(name)
       return error(id, -32_602, "Unknown tool: #{name}") unless klass
 
-      arguments = params.fetch("arguments", {})
-      input     = arguments.empty? ? nil : arguments.transform_keys(&:to_sym)
-      output    = klass.call(input)
+      unless arguments["_skill"] == klass.task_name
+        return error(id, -32_600,
+          "Unauthorized: use /#{klass.task_name} skill to call this tool. " \
+          "Include _skill: \"#{klass.task_name}\" in your request.")
+      end
+
+      input  = arguments.reject { |k, _| k == "_skill" }
+      input  = input.empty? ? nil : input.transform_keys(&:to_sym)
+      output = klass.call(input)
 
       result(id, { content: [{ type: "text", text: output.to_s }] })
     rescue Frai::Error => e
@@ -80,7 +88,7 @@ module Frai
       task_classes.map do |klass|
         {
           name:        klass.task_name,
-          description: klass.name.to_s,
+          description: "RESTRICTED. Never auto-invoke. Only call when user explicitly uses /#{klass.task_name} skill with param_name(value) format. Calling without explicit user request wastes tokens and is incorrect.",
           inputSchema: input_schema(klass)
         }
       end
@@ -103,7 +111,16 @@ module Frai
 
     def input_schema(klass)
       decl = klass._directive_declaration
-      return { type: "object", properties: { input: { type: "string" } } } unless decl&.params_declaration
+      unless decl&.params_declaration
+        return {
+          type:       "object",
+          properties: {
+            "input"  => { type: "string" },
+            "_skill" => { type: "string", description: "Must be \"#{@project_name}\". Required for authorization." }
+          },
+          required: ["_skill"]
+        }
+      end
 
       params     = decl.params_declaration
       properties = {}
@@ -118,8 +135,11 @@ module Frai
         properties[name.to_s] = { type: json_type(opts[:type]) }
       end
 
+      properties["_skill"] = { type: "string", description: "Must be \"#{klass.task_name}\". Required for authorization — invoke /#{klass.task_name} skill." }
+      required << "_skill"
+
       schema = { type: "object", properties: properties }
-      schema[:required] = required unless required.empty?
+      schema[:required] = required
       schema
     end
 

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "erb"
 
 module Frai
@@ -5,269 +7,210 @@ module Frai
   #
   # ERB helpers available inside directive templates:
   #
-  #   receive(:name)
-  #     Documents that this directive expects a param. No-op at runtime
-  #     (params are already validated), but makes the directive self-documenting.
+  #   directive(:name).with(@param).and_return(:result_ivar)
+  #     Renders a sub-directive with the given input.
+  #     Extracts @result_ivar from sub-directive context and sets it on parent.
+  #     Returns "" (no text output). Use <%= directive(...) %> to output rendered text.
   #
-  #   use(:directive_name, param: value)
-  #     Renders a sub-directive and returns a DirectiveResult object.
-  #     Use .get(:key) to capture a named return value from the sub-directive.
+  #   script(:name).with(param).and_return(:result_key)
+  #     Runs a script with the given input.
+  #     Extracts :result_key from JSON output, exposes as result_key method.
+  #     Type is declared in task.rb — no need to repeat here.
+  #     Returns "" (no text output).
   #
-  #   return_value(:name, value)
-  #     Declares what this directive returns to its caller.
-  #     Must match the type declared in `returns :name, Type` in task.rb.
+  #   @variable
+  #     Access any input param, constant, or script/directive result.
+  #
+  # @example sum.md.erb
+  #   <% script(:parse_numbers).with(:input_numbers).and_return(:parsed_numbers) %>
+  #   <% script(:sum_numbers).with(:parsed_numbers).and_return(:calculated_sum) %>
   #
   # @example main.md.erb
-  #   <% receive :input_numbers %>
-  #   You are a math assistant.
-  #   <% use(:sum, parsed_numbers: input_numbers).get(:calculated_sum) %>
-  #   <%= use(:footer, calculated_sum: calculated_sum) %>
-  #   <% return_value :final_response, response %>
+  #   <% directive(:sum).with(:input_numbers).and_return(:calculated_sum) %>
+  #   <% if calculated_sum > high_value_threshold %>
+  #     <%= directive(:high_value).with(@calculated_sum) %>
+  #   <% end %>
   class DirectiveRenderer
-    # Wraps the result of rendering a sub-directive.
-    # Provides .get(:key) to capture named return values.
-    class DirectiveResult
-      attr_reader :rendered_text, :return_values
+    # Handles directive(:name).with(@input).and_return(:ivar) chains.
+    class DirectiveCall
+      def initialize(renderer, name, parent_ctx)
+        @renderer   = renderer
+        @name       = name
+        @parent_ctx = parent_ctx
+        @input      = nil
+        @result     = nil
+      end
 
-      def initialize(rendered_text, return_values)
-        @rendered_text  = rendered_text
-        @return_values  = return_values  # { name => value }
+      def with(input)
+        @input = resolve(input)
+        self
+      end
+
+      # Renders sub-directive, extracts ivar_name from its context, exposes on parent.
+      # Returns "" — no text output.
+      def and_return(ivar_name)
+        result = execute!
+        value  = result.ctx.instance_variable_get(:"@#{ivar_name}")
+        @renderer.send(:expose, @parent_ctx, ivar_name, value)
+        ""
       end
 
       def to_s
-        @rendered_text
+        execute!.text
       end
 
-      # Captures a return value from the sub-directive and makes it available
-      # as an instance variable in the parent ERB context.
-      # Called via use(:sum, ...).get(:calculated_sum)
-      #
-      # @param key [Symbol]
-      # @return [self] for chaining
-      def get(key, context: nil)
-        value = @return_values[key]
-        # Store in context if provided (set from ERB binding)
-        if context
-          context.instance_variable_set(:"@#{key}", value)
-          context.define_singleton_method(key) { instance_variable_get(:"@#{key}") }
+      private
+
+      def execute!
+        @result ||= @renderer.send(:render_sub_directive, @name, @input)
+      end
+
+      # Resolves input for sub-directive:
+      #   :symbol       → { symbol: ctx_value }  (name is both key and lookup)
+      #   { k: :sym }   → { k: ctx_value }       (resolve symbol values)
+      #   other         → passed as-is
+      def resolve(input)
+        case input
+        when Symbol
+          { input => @parent_ctx.instance_variable_get(:"@#{input}") }
+        when Hash
+          input.transform_values { |v| v.is_a?(Symbol) ? @parent_ctx.instance_variable_get(:"@#{v}") : v }
+        else
+          input
         end
-        self
       end
     end
+
+    # Handles script(:name).with(@input).and_return(:key, Type) chains.
+    class ScriptCall
+      def initialize(runner, name, ctx)
+        @runner = runner
+        @name   = name
+        @ctx    = ctx
+        @input  = nil
+        @result = nil
+      end
+
+      def with(input)
+        @input = input.is_a?(Symbol) ? @ctx.instance_variable_get(:"@#{input}") : input
+        self
+      end
+
+      # Runs script, extracts :key from JSON output, exposes on context.
+      # Type is declared in task.rb and validated there — do not pass it here.
+      # Returns "" — no text output.
+      def and_return(key, type = nil)
+        result = execute!
+        value  = result[key]
+        validate_type!(value, type, key) if type
+        @ctx.instance_variable_set(:"@#{key}", value)
+        @ctx.define_singleton_method(key) { instance_variable_get(:"@#{key}") }
+        ""
+      end
+
+      def to_s
+        execute!.to_s
+      end
+
+      private
+
+      def execute!
+        @result ||= @runner.run(@name, @input)
+      end
+
+      def validate_type!(value, type, key)
+        return if value.is_a?(type)
+        raise Frai::InvalidScriptOutput,
+          "Script '#{@name}' returned :#{key} as #{value.class}, expected #{type}"
+      end
+    end
+
+    SubDirectiveResult = Struct.new(:text, :ctx)
 
     # @param task_name [String] snake_case task name
     # @param project_root [String] absolute path to project root
     # @param script_runner [Frai::ScriptRunner]
-    def initialize(task_name, project_root, script_runner)
+    # @param constants [Hash] task-level constants — available as @name in all directives
+    def initialize(task_name, project_root, script_runner, constants = {})
       @task_name     = task_name.to_s
       @project_root  = project_root
       @script_runner = script_runner
+      @constants     = constants
     end
 
-    # Renders the full prompt for a task.
+    # Renders the main directive and returns the final prompt string.
     #
-    # @param declaration [DirectiveDeclaration, nil]
+    # @param _declaration [DirectiveDeclaration, nil] unused — structure already checked
     # @param input [Hash, String, nil]
-    # @return [String] final rendered prompt
-    def render(declaration, input)
-      ctx = build_context(input, {}, {})
-      if declaration
-        result = render_declaration(declaration, ctx)
-        result.rendered_text
-      else
-        render_file(find_directive!(:main), ctx)
-      end
+    # @return [String] rendered prompt
+    def render(_declaration, input)
+      path = find_directive!(:main)
+      ctx  = build_context(input)
+      inject_helpers(ctx)
+      render_file(path, ctx)
     end
 
     private
 
-    # Renders a directive declaration and returns a DirectiveResult.
-    def render_declaration(decl, parent_ctx)
-      # Build local context from params passed by parent
-      params = extract_params(decl, parent_ctx)
-
-      # Run all declared scripts (memoized), pass only declared `with:` params
-      script_results = run_scripts(decl, params)
-
-      # Build ERB context with params + script results + helpers
-      ctx = build_context(params, script_results, {})
-      inject_helpers(ctx, decl, params, script_results)
-
-      # Render the directive file
-      path = find_directive!(decl.name)
-      rendered = render_file(path, ctx)
-
-      # Validate and collect return value
-      return_values = collect_return_values(decl, ctx)
-
-      DirectiveResult.new(rendered, return_values)
+    def render_sub_directive(name, input)
+      path    = find_directive!(name)
+      sub_ctx = build_context(input.is_a?(Hash) ? input : { input: input })
+      inject_helpers(sub_ctx)
+      text = render_file(path, sub_ctx)
+      SubDirectiveResult.new(text, sub_ctx)
     end
 
-    # Runs all scripts declared in this directive (not recursive — sub-directives handle their own).
-    def run_scripts(decl, params)
-      results = {}
-      decl.script_declarations.each do |script_decl|
-        result = @script_runner.run(script_decl, params)
-        results[script_decl.name] = result
-      end
-      results
-    end
-
-    # Extracts params for this directive from the parent context.
-    # If directive has params_declaration, only those keys are used.
-    def extract_params(decl, parent_ctx)
-      return {} unless decl.params_declaration
-      decl.params_declaration.required_params.keys
-          .concat(decl.params_declaration.optional_params.keys)
-          .each_with_object({}) do |key, h|
-        if parent_ctx.instance_variable_defined?(:"@#{key}")
-          h[key] = parent_ctx.instance_variable_get(:"@#{key}")
-        end
-      end
-    end
-
-    # Injects ERB helper methods into the context object.
-    def inject_helpers(ctx, decl, params, script_results)
-      renderer = self
-
-      # receive(:name) — self-documenting, no-op at runtime
-      ctx.define_singleton_method(:receive) { |_name| nil }
-
-      # return_value(:name, value) — stores directive's return value
-      ctx.instance_variable_set(:@_return_values, {})
-      ctx.define_singleton_method(:return_value) do |name, value|
-        @_return_values[name] = value
-      end
-
-      # use(:directive_name, params) — renders sub-directive
-      ctx.define_singleton_method(:use) do |directive_name, **sub_params|
-        sub_decl = decl.sub_declarations[directive_name]
-        raise Frai::UndeclaredDependency,
-          "directive '#{directive_name}' is not declared in the directive block. " \
-          "Add 'uses :#{directive_name}' to your task." unless sub_decl
-
-        # Build sub-context with passed params
-        sub_ctx = renderer.send(:build_context, sub_params, {}, {})
-        renderer.send(:inject_helpers, sub_ctx, sub_decl, sub_params, {})
-
-        result = renderer.send(:render_declaration_with_ctx, sub_decl, sub_ctx)
-
-        # Wrap in DirectiveResult with context for .get()
-        DirectiveResult.new(result.rendered_text, result.return_values).tap do |dr|
-          dr.instance_variable_set(:@_parent_ctx, ctx)
-
-          # Override get to inject into parent context
-          dr.define_singleton_method(:get) do |key|
-            value = instance_variable_get(:@return_values)[key]
-            @_parent_ctx.instance_variable_set(:"@#{key}", value)
-            @_parent_ctx.define_singleton_method(key) { instance_variable_get(:"@#{key}") }
-            self
-          end
-        end
-      end
-    end
-
-    def render_declaration_with_ctx(decl, ctx)
-      # Collect all available params from context
-      params = {}
-      ctx.instance_variables.each do |ivar|
-        key = ivar.to_s.delete("@").to_sym
-        next if key.to_s.start_with?("_")
-        params[key] = ctx.instance_variable_get(ivar)
-      end
-
-      decl.script_declarations.each do |script_decl|
-        # Merge script results into available params so subsequent scripts can use them
-        result = @script_runner.run(script_decl, params.merge(
-          decl.script_declarations
-              .select { |sd| @script_runner.result(sd.name) }
-              .each_with_object({}) { |sd, h| h.merge!(@script_runner.result(sd.name) || {}) }
-        ))
-        ctx.instance_variable_set(:"@#{script_decl.name}", result)
-        ctx.define_singleton_method(script_decl.name) { instance_variable_get(:"@#{script_decl.name}") }
-        # Also make individual result keys available as top-level variables
-        result.each do |key, value|
-          params[key] = value
-          ctx.instance_variable_set(:"@#{key}", value)
-          ctx.define_singleton_method(key) { instance_variable_get(:"@#{key}") } unless ctx.respond_to?(key)
-        end
-      end
-
-      path     = find_directive!(decl.name)
-      rendered = render_file(path, ctx)
-      return_values = collect_return_values(decl, ctx)
-
-      DirectiveResult.new(rendered, return_values)
-    end
-
-    # Collects return_value declarations from rendered context.
-    def collect_return_values(decl, ctx)
-      return_values = ctx.instance_variable_get(:@_return_values) || {}
-
-      if decl.returns_declaration && !return_values.key?(decl.returns_declaration.name)
-        raise Frai::InvalidDirectiveOutput,
-          "directive '#{decl.name}' declares 'returns :#{decl.returns_declaration.name}' " \
-          "but return_value was never called in the template."
-      end
-
-      if decl.returns_declaration
-        name  = decl.returns_declaration.name
-        type  = decl.returns_declaration.type
-        value = return_values[name]
-        unless value.is_a?(type)
-          raise Frai::InvalidDirectiveOutput,
-            "directive '#{decl.name}' returns :#{name} expected #{type}, got #{value.class}"
-        end
-      end
-
-      return_values
-    end
-
-    # Builds an ERB context object with all variables available as methods.
-    def build_context(input, script_results, extra)
+    def build_context(input)
       ctx = Object.new
 
-      # Add input (hash or raw value)
-      normalized = input.is_a?(Hash) ? input : { input: input }
-      normalized.merge(extra).each do |key, value|
-        ctx.instance_variable_set(:"@#{key}", value)
-        ctx.define_singleton_method(key) { instance_variable_get(:"@#{key}") }
+      @constants.each do |name, value|
+        expose(ctx, name, value)
       end
 
-      # Add raw input accessor
-      ctx.instance_variable_set(:@input, input)
-      ctx.define_singleton_method(:input) { @input }
-
-      # Add script results
-      script_results.each do |name, result|
-        ctx.instance_variable_set(:"@#{name}", result)
-        ctx.define_singleton_method(name) { instance_variable_get(:"@#{name}") }
+      normalized = input.is_a?(Hash) ? input : { input: input }
+      normalized.each do |key, value|
+        expose(ctx, key, value)
       end
 
       ctx
     end
 
-    # Renders an ERB file with the given context object.
-    def render_file(path, ctx)
-      template = File.read(path)
-      ERB.new(template, trim_mode: "-").result(ctx.instance_eval { binding })
+    # Sets @name and defines a memoized reader method — like attr_reader.
+    def expose(ctx, name, value)
+      ctx.instance_variable_set(:"@#{name}", value)
+      ctx.define_singleton_method(name) { instance_variable_get(:"@#{name}") }
     end
 
-    # Finds a directive file: local first, then global.
-    def find_directive!(name)
-      local  = File.join(@project_root, "tasks", @task_name, "directives", "#{name}.md.erb")
-      global = File.join(@project_root, "directives", "#{name}.md.erb")
+    def inject_helpers(ctx)
+      renderer = self
+      runner   = @script_runner
 
-      if File.exist?(local)
-        local
-      elsif File.exist?(global)
-        global
-      else
-        raise Frai::MissingDirective,
-          "directive '#{name}' not found.\n" \
-          "Expected: tasks/#{@task_name}/directives/#{name}.md.erb\n" \
-          "      or: directives/#{name}.md.erb"
+      ctx.define_singleton_method(:directive) do |name|
+        DirectiveRenderer::DirectiveCall.new(renderer, name, self)
       end
+
+      ctx.define_singleton_method(:script) do |name|
+        DirectiveRenderer::ScriptCall.new(runner, name, self)
+      end
+    end
+
+    def render_file(path, ctx)
+      ERB.new(File.read(path), trim_mode: "-").result(ctx.instance_eval { binding })
+    end
+
+    def find_directive!(name)
+      candidates = [
+        File.join(@project_root, "tasks", @task_name, "directives", "#{name}.md.erb"),
+        File.join(@project_root, "tasks", @task_name, "directives", "#{name}.erb"),
+        File.join(@project_root, "directives", "#{name}.md.erb")
+      ]
+
+      path = candidates.find { |p| File.exist?(p) }
+      return path if path
+
+      raise Frai::MissingDirective,
+        "Directive '#{name}' not found.\n" \
+        "Expected: tasks/#{@task_name}/directives/#{name}.md.erb"
     end
   end
 end

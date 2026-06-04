@@ -1,5 +1,6 @@
 require "fileutils"
 require "erb"
+require_relative "skill_generator"
 
 module Frai
   module Generators
@@ -16,6 +17,7 @@ module Frai
         check_target_dir
         create_directories
         copy_templates
+        update_skill
         print_success
       end
 
@@ -51,6 +53,15 @@ module Frai
         raw    = File.read(src)
         result = ERB.new(raw, trim_mode: "-").result(binding)
         File.write(dest, result)
+      end
+
+      def update_skill
+        project_name = File.basename(Dir.pwd)
+        puts ""
+        puts "  \e[34mcreating skill\e[0m /#{@name}"
+        SkillGenerator.new(@name, project_name).generate
+      rescue => e
+        puts "  \e[31mwarn\e[0m    Could not create skill: #{e.message}"
       end
 
       def say_create(path)

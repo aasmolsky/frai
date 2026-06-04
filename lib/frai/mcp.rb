@@ -1,21 +1,11 @@
 module Frai
-  # Registry of MCP (Model Context Protocol) server definitions.
-  # Each project declares its own MCP servers in the mcp/ folder.
-  # Tasks can only use servers explicitly declared via `mcp :name` in their directive.
-  #
-  # This ensures full isolation — a task cannot accidentally use a globally
-  # configured MCP server that was not declared as a dependency.
+  # Registry of external MCP server definitions consumed by the project.
+  # Servers are declared in the mcp/ folder and registered here for reference.
   #
   # @example mcp/browser.rb
   #   Frai::MCP.define :browser do
   #     command "npx"
   #     args    ["-y", "@modelcontextprotocol/server-puppeteer"]
-  #   end
-  #
-  # @example mcp/filesystem.rb
-  #   Frai::MCP.define :filesystem do
-  #     command "npx"
-  #     args    ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
   #   end
   module MCP
     # Holds the definition of a single MCP server.

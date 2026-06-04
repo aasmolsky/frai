@@ -1,31 +1,26 @@
+# frozen_string_literal: true
+
 module Frai
   # Base class for all Frai agents.
   #
-  # An agent orchestrates tasks and tools dynamically. Unlike pipelines,
-  # agents can make decisions, call tools, and loop based on LLM responses.
-  # Agents share the same external contract as tasks: {.call}.
+  # An agent orchestrates tasks dynamically — it can decide which tasks
+  # to call, in what order, and how many times, based on intermediate results.
   #
   # @example
-  #   class ObjectComparisonAgent < Frai::Agent
-  #     tool FetchDataTask
-  #     tool AnalyzeItemTask
+  #   class ResearchAgent < Frai::Agent
+  #     def call(input)
+  #       data    = FetchDataTask.call(input)
+  #       summary = SummarizeTask.call(data)
+  #       summary
+  #     end
   #   end
   #
-  #   ObjectComparisonAgent.call("compare object_a, object_b, object_c")
+  #   ResearchAgent.call("topic to research")
   class Agent
-    # Instantiates and calls the agent.
-    #
-    # @param input [Object, nil] input passed to the agent
-    # @return [Object] result returned by the agent
     def self.call(input = nil)
       new.call(input)
     end
 
-    # Runs the agent logic.
-    # Override in subclasses to implement orchestration.
-    #
-    # @param input [Object, nil] input passed to the agent
-    # @return [Object] agent result
     def call(input = nil)
       raise NotImplementedError, "#{self.class}#call is not implemented"
     end

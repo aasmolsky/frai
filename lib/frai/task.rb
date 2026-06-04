@@ -1,37 +1,40 @@
+# frozen_string_literal: true
+
 module Frai
   # Base class for all Frai tasks.
   #
   # Execution order:
   #   1. Validate params (if declared)
   #   2. Check structure (all declared files exist)
-  #   3. Render directives (ERB templates)
-  #   4. Run scripts (memoized, results available in directives)
-  #   5. Call LLM via configured adapter
-  #   6. Return response
+  #   3. Render directives (scripts run lazily inside renderer)
+  #   4. Call LLM via configured adapter
+  #   5. Return response
   #
   # @example Minimal task
   #   class AnalyzeItemTask < Frai::Task
   #   end
   #   AnalyzeItemTask.call("some text")
   #
-  # @example With explicit contract
-  #   class AnalyzeItemTask < Frai::Task
+  # @example With params, constants, and sub-directives
+  #   class SumNumbersTask < Frai::Task
+  #     const :high_value_threshold, 10
+  #
   #     directive :main do
   #       params do
-  #         required :name,     String
-  #         required :category, String
-  #         optional :lang,     String, default: "en"
+  #         required :input_numbers, String
   #       end
-  #       uses :system
-  #       runs :fetch_data
+  #       directive :sum do
+  #         script :parse_numbers do
+  #           input   String
+  #           returns parsed_numbers: [Integer]
+  #         end
+  #       end
   #     end
   #   end
-  #   AnalyzeItemTask.call(name: "iPhone 15", category: "phones")
   class Task
     class << self
       # Returns the snake_case name derived from the class name.
-      # Used to locate task files on disk.
-      # e.g. AnalyzeItemTask => "analyze_item"
+      # e.g. SumNumbersTask => "sum_numbers"
       #
       # @return [String]
       def task_name
@@ -41,25 +44,28 @@ module Frai
             .downcase
       end
 
-      # DSL: declares the entry point directive and its dependencies.
+      # DSL: declares a constant available as @name in all directives.
+      #
+      # @param name [Symbol]
+      # @param value [Object]
+      def const(name, value)
+        @_constants       ||= {}
+        @_constants[name] = value
+      end
+
+      # @return [Hash]
+      def _constants
+        @_constants || {}
+      end
+
+      # DSL: declares the main directive and its structure.
       #
       # @param name [Symbol] directive name (default: :main)
-      # @yield [DirectiveDeclaration] block for declaring dependencies
+      # @yield [DirectiveDeclaration]
       def directive(name = :main, &block)
         decl = DirectiveDeclaration.new(name)
         decl.instance_eval(&block) if block_given?
         @_directive_declaration = decl
-      end
-
-      # DSL: declares a reusable dependency block.
-      #
-      # @param name [Symbol] scheme name
-      # @yield [DirectiveDeclaration] block for declaring dependencies
-      def scheme(name, &block)
-        @_schemes ||= {}
-        decl = DirectiveDeclaration.new(name)
-        decl.instance_eval(&block) if block_given?
-        @_schemes[name] = decl
       end
 
       # @return [Frai::DirectiveDeclaration, nil]
@@ -67,17 +73,22 @@ module Frai
         @_directive_declaration
       end
 
-      # @return [Hash, nil]
-      def _schemes
-        @_schemes
-      end
-
-      # Instantiates and calls the task.
-      #
       # @param input [Hash, String, nil]
       # @return [Object]
       def call(input = nil)
         new.call(input)
+      end
+
+      # Checks structure once per class per process. Subsequent calls are no-ops.
+      def ensure_structure_checked!
+        return if @_structure_checked
+        StructureChecker.new(self).check!
+        @_structure_checked = true
+      end
+
+      # Resets structure check cache (useful in tests or after file changes).
+      def reset_structure_check!
+        @_structure_checked = false
       end
     end
 
@@ -88,34 +99,23 @@ module Frai
     def call(input = nil)
       decl = self.class._directive_declaration
 
-      # 1. Validate params if declared
       input = validate_params!(decl, input)
+      self.class.ensure_structure_checked!
 
-      # 2. Check that all declared files exist
-      StructureChecker.new(self.class).check!
-
-      # 3 & 4. Render directives (scripts are run inside renderer, memoized)
-      script_runner = ScriptRunner.new(
-        self.class.task_name,
-        Frai.configuration.project_root
-      )
-
-      renderer = DirectiveRenderer.new(
+      script_runner = ScriptRunner.new(self.class.task_name, Frai.configuration.project_root)
+      renderer      = DirectiveRenderer.new(
         self.class.task_name,
         Frai.configuration.project_root,
-        script_runner
+        script_runner,
+        self.class._constants
       )
 
       prompt = renderer.render(decl, input)
-
-      # 5. Call LLM
       adapter.complete(prompt)
     end
 
     private
 
-    # Validates input against declared params, applies defaults.
-    # If no params declared, returns input unchanged.
     def validate_params!(decl, input)
       return input unless decl&.params_declaration
 
@@ -127,10 +127,8 @@ module Frai
       decl.params_declaration.validate!(input, self.class)
     end
 
-    # Returns the configured LLM adapter instance.
     def adapter
       adapter_name = Frai.configuration.adapter
-
       raise Frai::AdapterNotConfigured,
         "No adapter configured. Set config.adapter in config/frai.rb" unless adapter_name
 
@@ -139,8 +137,7 @@ module Frai
       when :anthropic then load_adapter("anthropic", "Frai::Adapters::Anthropic")
       when :openai    then load_adapter("openai",    "Frai::Adapters::OpenAI")
       when :ollama    then load_adapter("ollama",    "Frai::Adapters::Ollama")
-      else
-        raise Frai::AdapterNotConfigured, "Unknown adapter: #{adapter_name}"
+      else raise Frai::AdapterNotConfigured, "Unknown adapter: #{adapter_name}"
       end
     end
 
