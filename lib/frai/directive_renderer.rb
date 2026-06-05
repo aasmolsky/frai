@@ -7,31 +7,30 @@ module Frai
   #
   # ERB helpers available inside directive templates:
   #
-  #   directive(:name).with(@param).and_return(:result_ivar)
-  #     Renders a sub-directive with the given input.
-  #     Extracts @result_ivar from sub-directive context and sets it on parent.
-  #     Returns "" (no text output). Use <%= directive(...) %> to output rendered text.
+  #   use(:name).with(:param).and_return(:result)
+  #     Renders a sub-directive. Extracts :result from sub-directive context and
+  #     sets it on parent. Returns "" (no text output).
+  #     Use <%= use(...) %> to output rendered text.
   #
-  #   script(:name).with(param).and_return(:result_key)
-  #     Runs a script with the given input.
-  #     Extracts :result_key from JSON output, exposes as result_key method.
+  #   run(:name).with(:param).and_return(:result_key)
+  #     Runs a script. Extracts :result_key from JSON output, exposes as method.
   #     Type is declared in task.rb — no need to repeat here.
   #     Returns "" (no text output).
   #
-  #   @variable
-  #     Access any input param, constant, or script/directive result.
+  #   method_name
+  #     Access any input param, constant, or script/directive result as a plain method.
   #
   # @example sum.md.erb
-  #   <% script(:parse_numbers).with(:input_numbers).and_return(:parsed_numbers) %>
-  #   <% script(:sum_numbers).with(:parsed_numbers).and_return(:calculated_sum) %>
+  #   <% run(:parse_numbers).with(:input_numbers).and_return(:parsed_numbers) %>
+  #   <% run(:sum_numbers).with(:parsed_numbers).and_return(:calculated_sum) %>
   #
   # @example main.md.erb
-  #   <% directive(:sum).with(:input_numbers).and_return(:calculated_sum) %>
+  #   <% use(:sum).with(:input_numbers).and_return(:calculated_sum) %>
   #   <% if calculated_sum > high_value_threshold %>
-  #     <%= directive(:high_value).with(@calculated_sum) %>
+  #     <%= use(:high_value).with(:calculated_sum) %>
   #   <% end %>
   class DirectiveRenderer
-    # Handles directive(:name).with(@input).and_return(:ivar) chains.
+    # Handles use(:name).with(:input).and_return(:ivar) chains.
     class DirectiveCall
       def initialize(renderer, name, parent_ctx)
         @renderer   = renderer
@@ -185,11 +184,11 @@ module Frai
       renderer = self
       runner   = @script_runner
 
-      ctx.define_singleton_method(:directive) do |name|
+      ctx.define_singleton_method(:use) do |name|
         DirectiveRenderer::DirectiveCall.new(renderer, name, self)
       end
 
-      ctx.define_singleton_method(:script) do |name|
+      ctx.define_singleton_method(:run) do |name|
         DirectiveRenderer::ScriptCall.new(runner, name, self)
       end
     end

@@ -10,15 +10,19 @@ module Frai
   #       required :input_numbers, String
   #     end
   #
-  #     directive :sum do
-  #       script :parse_numbers do
+  #     use :sum do
+  #       run :parse_numbers do
   #         input   String
   #         returns parsed_numbers: [Integer]
   #       end
-  #       script :sum_numbers do
+  #       run :sum_numbers do
   #         input   [Integer]
   #         returns calculated_sum: Integer
   #       end
+  #     end
+  #
+  #     use :high_value do
+  #       params { required :calculated_sum, Integer }
   #     end
   #   end
   class DirectiveDeclaration
@@ -58,15 +62,15 @@ module Frai
       @params_declaration.instance_eval(&block)
     end
 
-    # DSL: declares a sub-directive.
-    def directive(name, &block)
+    # DSL: declares a sub-directive dependency.
+    def use(name, &block)
       decl = DirectiveDeclaration.new(name)
       decl.instance_eval(&block) if block_given?
       @sub_directives[name] = decl
     end
 
-    # DSL: declares a script available to this directive.
-    def script(name, &block)
+    # DSL: declares a script dependency.
+    def run(name, &block)
       decl = ScriptDeclaration.new(name)
       decl.instance_eval(&block) if block_given?
       @script_declarations[name] = decl

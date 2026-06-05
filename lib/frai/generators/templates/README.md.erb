@@ -96,8 +96,8 @@ class AnalyzeItemTask < BaseTask
       optional :lang,     String, default: "en"
     end
 
-    directive :context do
-      script :fetch_data do
+    use :context do
+      run :fetch_data do
         input   String
         returns data: String
       end
@@ -144,7 +144,7 @@ Max length: <%%= max_length %> characters.
 Run a script and capture its result:
 
 ```erb
-<%% script(:fetch_data).with(:name).and_return(:data) %>
+<%% run(:fetch_data).with(:name).and_return(:data) %>
 <%%= data %>
 ```
 
@@ -158,13 +158,13 @@ Script results are memoized — each script runs at most once per task execution
 Render a sub-directive and capture its result:
 
 ```erb
-<%% directive(:context).with(:name).and_return(:context_text) %>
+<%% use(:context).with(:name).and_return(:context_text) %>
 ```
 
 Output a sub-directive's rendered text:
 
 ```erb
-<%%= directive(:summary).with(:data) %>
+<%%= use(:summary).with(:data) %>
 ```
 
 ### Conditional logic
@@ -172,12 +172,12 @@ Output a sub-directive's rendered text:
 Full Ruby is available in templates:
 
 ```erb
-<%% directive(:context).with(:name).and_return(:score) %>
+<%% use(:context).with(:name).and_return(:score) %>
 
 <%% if score > max_length %>
-  <%%= directive(:detailed).with(:score) %>
+  <%%= use(:detailed).with(:score) %>
 <%% else %>
-  <%%= directive(:brief).with(:score) %>
+  <%%= use(:brief).with(:score) %>
 <%% end %>
 ```
 
