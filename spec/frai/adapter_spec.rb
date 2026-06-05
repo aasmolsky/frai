@@ -8,20 +8,25 @@ RSpec.describe Frai::Task do
   after { Frai.reset! }
 
   describe "#adapter" do
-    context "without adapter configured" do
-      before { Frai.configure { |c| c.adapter = nil } }
+    context "without model configured" do
+      before { Frai.configure { |c| c.model = nil } }
 
-      it "raises AdapterNotConfigured" do
-        expect { task.send(:adapter) }.to raise_error(Frai::AdapterNotConfigured)
+      it "returns a Null adapter" do
+        expect(task.send(:adapter)).to be_a(Frai::Adapters::Null)
       end
     end
 
-    context "with null adapter configured", :aggregate_failures do
-      before { Frai.configure { |c| c.adapter = :null } }
+    context "with model configured", :aggregate_failures do
+      before do
+        Frai.configure do |c|
+          c.model   = "claude-opus-4-6"
+          c.api_key = "test-key"
+        end
+      end
 
-      it "returns a Null adapter without raising" do
-        expect { task.send(:adapter) }.not_to raise_error
-        expect(task.send(:adapter)).to be_a(Frai::Adapters::Null)
+      it "attempts to load RubyLlm adapter" do
+        # ruby_llm gem not installed in test env — expect LoadError wrapped as AdapterNotFound
+        expect { task.send(:adapter) }.to raise_error(Frai::Error)
       end
     end
   end

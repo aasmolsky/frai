@@ -44,6 +44,21 @@ module Frai
             .downcase
       end
 
+      # DSL: declares an MCP server dependency for this task.
+      # In CLI mode — verified against Claude CLI registration.
+      # In API mode — connected as tools for the LLM.
+      #
+      # @param name [Symbol] server name defined in mcp/*.rb
+      def mcp(name)
+        @_mcps ||= []
+        @_mcps << name
+      end
+
+      # @return [Array<Symbol>]
+      def _mcps
+        @_mcps || []
+      end
+
       # DSL: declares a constant available as @name in all directives.
       #
       # @param name [Symbol]
@@ -110,11 +125,41 @@ module Frai
         self.class._constants
       )
 
+      mcp_servers = declared_mcp_servers
+      verify_mcp_servers!(mcp_servers)
       prompt = renderer.render(decl, input)
-      adapter.complete(prompt)
+      adapter.complete(prompt, mcp_servers: mcp_servers)
     end
 
     private
+
+    # Resolves declared MCP names to ServerDefinition objects.
+    def declared_mcp_servers
+      self.class._mcps.map do |name|
+        server = Frai::MCP.find(name)
+        raise Frai::Error,
+          "MCP :#{name} is declared in #{self.class} but not defined in mcp/#{name}.rb.\n" \
+          "Create the file or run `frai setup`." unless server
+        server
+      end
+    end
+
+    # Verifies MCP servers are accessible before calling the LLM.
+    # API mode: adapter handles the actual connection check.
+    # CLI mode: verifies servers are registered with Claude CLI.
+    def verify_mcp_servers!(servers)
+      return if servers.empty?
+      return if Frai.configuration.model  # API mode — adapter will check
+
+      registered = `claude mcp list 2>/dev/null`
+      servers.each do |server|
+        next if registered.include?(server.name.to_s)
+
+        raise Frai::Error,
+          "MCP :#{server.name} is not registered with Claude CLI.\n" \
+          "Run `frai setup` to register it."
+      end
+    end
 
     def validate_params!(decl, input)
       return input unless decl&.params_declaration
@@ -128,25 +173,14 @@ module Frai
     end
 
     def adapter
-      adapter_name = Frai.configuration.adapter
-      raise Frai::AdapterNotConfigured,
-        "No adapter configured. Set config.adapter in config/frai.rb" unless adapter_name
+      model = Frai.configuration.model
+      return Frai::Adapters::Null.new unless model
 
-      case adapter_name
-      when :null      then Frai::Adapters::Null.new
-      when :anthropic then load_adapter("anthropic", "Frai::Adapters::Anthropic")
-      when :openai    then load_adapter("openai",    "Frai::Adapters::OpenAI")
-      when :ollama    then load_adapter("ollama",    "Frai::Adapters::Ollama")
-      else raise Frai::AdapterNotConfigured, "Unknown adapter: #{adapter_name}"
-      end
-    end
-
-    def load_adapter(file, class_name)
-      require_relative "adapters/#{file}"
-      Object.const_get(class_name).new
+      require_relative "adapters/ruby_llm"
+      Frai::Adapters::RubyLlm.new(model, Frai.configuration.api_key)
     rescue LoadError
-      raise Frai::AdapterNotFound,
-        "Adapter '#{file}' not found. Make sure the adapter file exists."
+      raise Frai::Error,
+        "ruby_llm gem not found. Add `gem \"ruby_llm\"` to your Gemfile."
     end
   end
 end

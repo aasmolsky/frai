@@ -255,9 +255,8 @@ ResearchAgent.call("topic to research")
 ```ruby
 # config/frai.rb
 Frai.configure do |config|
-  config.adapter = :anthropic          # :anthropic, :openai, :ollama, :null
-  config.model   = "claude-opus-4-6"
-  config.api_key = ENV["ANTHROPIC_API_KEY"]
+  config.model   = ENV["LLM_MODEL"]   # e.g. "claude-opus-4-6", "gpt-4o"
+  config.api_key = ENV["API_KEY"]
 end
 ```
 

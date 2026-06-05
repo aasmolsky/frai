@@ -10,15 +10,16 @@ Gem::Specification.new do |spec|
   spec.description   = "Rails-inspired framework for building LLM tasks, pipelines and agents"
   spec.homepage      = "https://github.com/aasmolsky/frai"
   spec.license       = "MIT"
-  spec.required_ruby_version = ">= 3.1.0"
+  spec.required_ruby_version = ">= 3.3.0"
 
-  spec.files         = Dir["lib/**/*", "bin/*", "LICENSE", "README.md"]
+  spec.files         = Dir["lib/**/*", "lib/**/.*", "bin/*", "LICENSE", "README.md"]
   spec.bindir        = "bin"
   spec.executables   = ["frai"]
   spec.require_paths = ["lib"]
 
-  spec.add_dependency "thor", "~> 1.3"
-  spec.add_dependency "irb"
+  spec.add_dependency "thor",         "~> 1.3"
+  spec.add_dependency "ruby_llm",     "~> 1.0"
+  spec.add_dependency "ruby_llm-mcp", "~> 1.0"
 
   spec.add_development_dependency "yard",  "~> 0.9"
   spec.add_development_dependency "rspec", "~> 3.13"

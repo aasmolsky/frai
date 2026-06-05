@@ -67,28 +67,48 @@ module Frai
         - key:value pairs: frai exec CodeReviewTask task_number:PDB-111
         - name(value) format: frai exec CodeReviewTask "task_number(PDB-111)"
 
+      Use --log to write output and errors to a file (directories created automatically):
+        frai exec CodeReviewTask "task_id(PDB-111)" --log logs/reviews.log
+
       Examples:
         frai exec AnalyzeItemTask "some input"
         frai exec CodeReviewTask task_number:PDB-111
         frai exec SumNumbersTask "input_numbers(1,2,3)"
     DESC
+    option :log, type: :string, desc: "Path to log file (created if missing)"
     def exec(class_name, input = nil)
+      log_path = options[:log] ? File.expand_path(options[:log], Dir.pwd) : nil
+      FileUtils.mkdir_p(File.dirname(log_path)) if log_path
+
       load_project!
-      Frai.configuration.adapter ||= :null
       parsed = parse_input(input)
-      result = Object.const_get(class_name).call(parsed)
+
+      klass = begin
+        Object.const_get(class_name)
+      rescue NameError
+        msg = "Error: task class '#{class_name}' not found. Check the class name."
+        log_message(log_path, msg, success: false)
+        abort msg
+      end
+
+      result = klass.call(parsed)
+      log_message(log_path, result, success: true) if log_path
       puts result
     rescue Frai::MissingParam, Frai::InvalidParam => e
-      klass  = Object.const_get(class_name) rescue nil
-      params = klass&._directive_declaration&.params_declaration
+      klass    = Object.const_get(class_name) rescue nil
+      params   = klass&._directive_declaration&.params_declaration
       required = params&.required_params&.keys&.map { |k| "#{k}(value)" }&.join(" ")
-      abort "Error: #{e.message}\n\nUsage: frai exec #{class_name} \"#{required}\""
+      msg = "Error: #{e.message}\n\nUsage: frai exec #{class_name} \"#{required}\""
+      log_message(log_path, msg, success: false)
+      abort msg
     rescue Frai::Error => e
-      abort "Error: #{e.message}"
-    rescue NameError
-      abort "Error: task class '#{class_name}' not found. Check the class name."
+      msg = "Error: #{e.message}"
+      log_message(log_path, msg, success: false)
+      abort msg
     rescue => e
-      abort "Error: #{e.message}"
+      msg = "Error: #{e.message}"
+      log_message(log_path, msg, success: false)
+      abort msg
     end
 
     desc "setup", "Register all project MCP servers with Claude CLI and Codex"
@@ -150,10 +170,25 @@ module Frai
 
     private
 
+    def log_message(path, message, success:)
+      return unless path
+      timestamp = Time.now.strftime("%Y-%m-%d %H:%M:%S")
+      status    = success ? "SUCCESS" : "ERROR"
+      File.open(path, "a") do |f|
+        f.puts "[#{timestamp}] [#{status}]"
+        f.puts message
+        f.puts "-" * 60
+      end
+    end
+
     def load_project!
       config = File.join(Dir.pwd, "config", "frai.rb")
       abort "Error: config/frai.rb not found. Are you inside a Frai project?" unless File.exist?(config)
       require config
+      load_mcps!
+      Frai::StructureChecker.check_mcp_consistency!(Dir.pwd)
+    rescue Frai::Error => e
+      abort "Error: #{e.message}"
     end
 
     def allow_mcp_permissions(servers)

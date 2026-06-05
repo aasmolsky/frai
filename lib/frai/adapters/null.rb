@@ -14,7 +14,7 @@ module Frai
     class Null
       # @param prompt [String] the rendered prompt
       # @return [String] returns the prompt unchanged
-      def complete(prompt)
+      def complete(prompt, mcp_servers: [])
         prompt
       end
     end
