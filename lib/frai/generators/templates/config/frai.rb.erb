@@ -1,8 +1,17 @@
 require "frai"
 
+# Load environment variables from .env (project-local, git-ignored)
+env_file = File.join(__dir__, "..", ".env")
+if File.exist?(env_file)
+  File.foreach(env_file) do |line|
+    line = line.strip
+    next if line.empty? || line.start_with?("#")
+    key, value = line.split("=", 2)
+    ENV[key] ||= value.to_s.strip
+  end
+end
+
 # Auto-load all Ruby files from the project directories.
-# This makes all tasks, pipelines, agents and tools available
-# without requiring them manually.
 Frai.autoload!(File.expand_path("..", __dir__))
 
 Frai.configure do |config|

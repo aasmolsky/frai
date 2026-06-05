@@ -54,6 +54,9 @@ module Frai
           "spec/conventions_spec.rb.erb"  => "spec/conventions_spec.rb",
           "Gemfile.erb"                   => "Gemfile",
           "README.md.erb"                 => "README.md",
+          ".env.erb"                      => ".env",
+          ".env.example.erb"              => ".env.example",
+          ".gitignore.erb"                => ".gitignore",
         }
 
         templates.each do |template, target|

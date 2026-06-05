@@ -43,7 +43,6 @@ gem "ollama-ai"    # for Ollama (local models)
   agents/              # orchestrators that decide what to call and when
     base_agent.rb
   scripts/             # shared scripts in any language (Python, JS, bash...)
-  mcp/                 # external MCP server definitions
   directives/          # shared prompt templates (reused across tasks)
     base.md.erb
   config/
@@ -262,35 +261,32 @@ Frai.configure do |config|
 end
 ```
 
-The `:null` adapter returns the rendered prompt without making an LLM call — useful for testing and MCP mode.
+The `:null` adapter returns the rendered prompt without making an LLM call — useful for testing.
 
 ---
 
-## MCP skill mode
+## Claude CLI integration
 
-Each task is automatically exposed as a Claude CLI / Codex / Cursor skill when generated:
+Each task gets its own slash command. `frai gt` creates it automatically:
 
 ```bash
 frai gt analyze_item
 # → creates task files
-# → detects installed AI clients
-# → registers MCP server
-# → creates skill ~/.claude/skills/analyze_item/
-# → disables approval prompts
+# → creates .claude/commands/analyze_item.md
 ```
 
-Invoke from Claude CLI:
+Invoke from Claude CLI **inside the project directory**:
 
 ```
-/analyze_item name(iPhone 15) category(phones)
+/analyze_item name(value) category(value)
 ```
 
 Where `name` and `category` are params declared in `task.rb`. Required params missing → error.
 
-Remove a task and clean up everything:
+Remove a task:
 
 ```bash
-frai rt analyze_item       # short for: frai remove task
+frai rt analyze_item   # short for: frai remove task
 ```
 
 ---
@@ -300,13 +296,13 @@ frai rt analyze_item       # short for: frai remove task
 | Command | Description |
 |---|---|
 | `frai new PROJECT_NAME` | Create a new project (`frai n`) |
-| `frai generate task NAME` | Generate a task + register skill (`frai gt`) |
+| `frai generate task NAME` | Generate a task + Claude CLI command (`frai gt`) |
 | `frai generate pipeline NAME` | Generate a pipeline (`frai gp`) |
 | `frai generate agent NAME` | Generate an agent (`frai ga`) |
-| `frai remove task NAME` | Remove a task and clean up skill, MCP, and config entries (`frai rt`) |
+| `frai remove task NAME` | Remove a task and its Claude CLI command (`frai rt`) |
+| `frai setup` | Register `mcp/*.rb` servers with Claude CLI (`frai s`) |
 | `frai exec CLASS_NAME [INPUT]` | Execute a task, pipeline, or agent (`frai e`) |
 | `frai console` | Interactive Ruby console with project loaded (`frai c`) |
-| `frai serve --dir PATH` | Start MCP server (`frai s`) |
 
 ---
 

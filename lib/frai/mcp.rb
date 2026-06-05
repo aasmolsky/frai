@@ -1,67 +1,64 @@
+# frozen_string_literal: true
+
 module Frai
-  # Registry of external MCP server definitions consumed by the project.
-  # Servers are declared in the mcp/ folder and registered here for reference.
+  # Registry of external MCP server definitions required by the project.
+  # Declared in mcp/*.rb files. Used by `frai setup` to register them
+  # with AI clients (Claude CLI, Codex, etc.).
   #
-  # @example mcp/browser.rb
-  #   Frai::MCP.define :browser do
-  #     command "npx"
-  #     args    ["-y", "@modelcontextprotocol/server-puppeteer"]
+  # @example mcp/jira.rb
+  #   Frai::MCP.define :jira do
+  #     command "uv"
+  #     args    ["--directory", "~/softswiss/jira-mcp", "run", "main.py"]
+  #     env     JIRA_URL: ENV["JIRA_URL"], JIRA_TOKEN: ENV["JIRA_TOKEN"]
   #   end
   module MCP
-    # Holds the definition of a single MCP server.
     class ServerDefinition
-      attr_reader :name, :command_value, :args_value, :env_value
+      attr_reader :name, :type, :url_value, :command_value, :args_value, :env_value
 
       def initialize(name)
         @name          = name
+        @type          = :stdio       # :stdio or :http
+        @url_value     = nil
         @command_value = nil
         @args_value    = []
         @env_value     = {}
       end
 
-      # The executable to run (e.g. "npx", "python3", "node")
+      # For HTTP MCP servers (streamablehttp)
+      def url(value)
+        @type      = :http
+        @url_value = value
+      end
+
+      # For stdio MCP servers
       def command(value)
         @command_value = value
       end
 
-      # Arguments passed to the command
       def args(value)
         @args_value = value
       end
 
-      # Environment variables passed to the MCP server process
-      def env(value)
-        @env_value = value
+      def env(pairs = {})
+        @env_value = pairs.transform_keys(&:to_s)
       end
     end
 
     class << self
-      # Defines a named MCP server for use in tasks.
-      #
-      # @param name [Symbol] server name — used in `mcp :name` directive declarations
-      # @yield [ServerDefinition]
       def define(name, &block)
         server = ServerDefinition.new(name)
         server.instance_eval(&block) if block_given?
         registry[name] = server
       end
 
-      # Returns a registered server definition by name.
-      #
-      # @param name [Symbol]
-      # @return [ServerDefinition, nil]
+      def all
+        registry.values
+      end
+
       def find(name)
         registry[name]
       end
 
-      # Returns all registered server names.
-      #
-      # @return [Array<Symbol>]
-      def registered
-        registry.keys
-      end
-
-      # Clears the registry (useful in tests).
       def reset!
         @registry = {}
       end
