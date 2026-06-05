@@ -40,7 +40,7 @@ module Frai
 
       @cache[name] = JSON.parse(stdout, symbolize_names: true)
     rescue JSON::ParserError => e
-      raise Frai::Error, "Script '#{name}' returned invalid JSON: #{e.message}"
+      raise Frai::Error, "Script '#{name}' returned invalid JSON: #{e.message}\nOutput was: #{stdout.to_s[0..200]}"
     end
 
     private

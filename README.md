@@ -8,6 +8,14 @@ Ruby is an expressive language built for developer happiness — but it rarely a
 
 ## Installation
 
+Install the gem globally:
+
+```bash
+gem install frai
+```
+
+Or add to your Gemfile (if embedding in an existing project):
+
 ```ruby
 gem "frai"
 ```
@@ -24,7 +32,6 @@ bundle install
 frai new my_project
 cd my_project
 bundle install
-frai generate task analyze_item
 ```
 
 Generated structure:
@@ -33,21 +40,34 @@ Generated structure:
 my_project/
   tasks/
     base_task.rb
-    analyze_item/
-      task.rb
-      directives/
-        main.md.erb    # prompt template — entry point
-      scripts/         # executables in any language
   pipelines/
     base_pipeline.rb
   agents/
     base_agent.rb
   scripts/             # shared scripts
   directives/          # shared prompt templates
+  mcp/                 # external MCP server definitions
   config/
     frai.rb            # adapter, model, API key
+  .env                 # local secrets — git-ignored
+  .env.example         # template to commit
+  .gitignore
   spec/
     conventions_spec.rb
+```
+
+The generated `Gemfile` already includes `gem "frai"` — run `bundle install` to install dependencies.
+
+**Full first-run flow:**
+
+```bash
+frai new my_project
+cd my_project
+bundle install          # install dependencies
+cp .env.example .env    # fill in your secrets
+# add mcp/*.rb files if needed
+frai setup              # register MCP servers with Claude CLI
+frai gt analyze_item    # generate your first task
 ```
 
 ---
@@ -68,150 +88,203 @@ AnalyzeItemTask.call("some input")
 ### With params and constants
 
 ```ruby
-class SumNumbersTask < BaseTask
-  const :high_value_threshold, 10   # available in all directives as high_value_threshold
-
+class CodeReviewTask < BaseTask
   directive :main do
     params do
-      required :input_numbers, String   # Frai::MissingParam if absent
-      optional :lang,          String, default: "en"
+      required :task_id, String   # Frai::MissingParam if absent
+      optional :lang,    String, default: "en"
     end
 
-    directive :sum do
-      script :parse_numbers do
+    directive :check_resources
+
+    directive :context do
+      script :fetch_diff do
         input   String
-        returns parsed_numbers: [Integer]
+        returns diff: String
       end
-      script :sum_numbers do
-        input   [Integer]
-        returns calculated_sum: Integer
-      end
-    end
-
-    directive :high_value do
-      params { required :calculated_sum, Integer }
-    end
-
-    directive :low_value do
-      params { required :calculated_sum, Integer }
     end
   end
 end
 ```
 
-`task.rb` is the contract — it declares what the task needs, what scripts it runs, and what sub-directives it uses. Types and structure live here; logic lives in the templates.
+`task.rb` is the contract — params, constants, sub-directives, and scripts are declared here.
 
 ---
 
 ## Directives
 
-Directives are Markdown + ERB prompt templates. `main.md.erb` is always the entry point for the LLM call.
+Directives are Markdown + ERB prompt templates. `main.md.erb` is always the entry point.
 
 ### Variables
 
-Params, constants, and script results are available as plain methods:
+Params and constants are available as plain methods:
 
 ```erb
-You are an expert analyst.
-Analyze: <%= input %>
-Respond in: <%= lang %>
+You are a senior engineer performing a code review for task <%= task_id %>.
 ```
 
 ### Scripts
 
-Run a script and capture its result:
-
 ```erb
-<% script(:parse_numbers).with(:input_numbers).and_return(:parsed_numbers) %>
-<% script(:sum_numbers).with(:parsed_numbers).and_return(:calculated_sum) %>
+<% script(:fetch_diff).with(:task_id).and_return(:diff) %>
+<%= diff %>
 ```
 
-- `.with(:param)` — pass a value from the current context by name
-- `.and_return(:key)` — extract `:key` from the script's JSON output and expose it as a method
+- `.with(:param)` — pass a value from current context by name
+- `.and_return(:key)` — extract `:key` from script JSON output and expose as method
 
 ### Sub-directives
 
-Render a sub-directive and capture its result:
-
 ```erb
-<% directive(:sum).with(:input_numbers).and_return(:calculated_sum) %>
-```
-
-Output a sub-directive's rendered text:
-
-```erb
-<%= directive(:high_value).with(:calculated_sum) %>
+<%= directive(:check_resources) %>
+<% directive(:context).with(:task_id).and_return(:diff) %>
 ```
 
 ### Conditional logic
 
-Full Ruby is available in templates:
-
 ```erb
-<% directive(:sum).with(:input_numbers).and_return(:calculated_sum) %>
-
-<% if calculated_sum > high_value_threshold %>
-  <%= directive(:high_value).with(:calculated_sum) %>
+<% if score > threshold %>
+  <%= directive(:high_score).with(:score) %>
 <% else %>
-  <%= directive(:low_value).with(:calculated_sum) %>
+  <%= directive(:low_score).with(:score) %>
 <% end %>
 ```
 
 ### Shared directives
 
-Directives reused across tasks go in the top-level `directives/` folder:
-
 ```
 directives/
-  system.md.erb   # available to all tasks as a fallback
+  check_resources.md.erb   # reusable across tasks
 ```
 
 ---
 
 ## Scripts
 
-Scripts are executables in any language. They receive `{ input: value }` as JSON on stdin and write a JSON hash to stdout.
+Scripts receive `{ input: value }` as JSON on stdin and write a JSON hash to stdout:
 
 ```ruby
-# tasks/sum_numbers/scripts/parse_numbers.rb
+# tasks/code_review/scripts/fetch_diff.rb
 require 'json'
-input_str = JSON.parse($stdin.read, symbolize_names: true)[:input]
-numbers   = input_str.split(",").map(&:strip).map(&:to_i)
-puts JSON.generate({ parsed_numbers: numbers })
+input = JSON.parse($stdin.read, symbolize_names: true)[:input]
+puts JSON.generate({ diff: "diff for #{input}" })
 ```
 
 ```python
 # tasks/analyze_item/scripts/fetch.py
 import sys, json
 data = json.load(sys.stdin)
-print(json.dumps({ "title": f"Fetched: {data['input']}" }))
+print(json.dumps({ "result": f"fetched: {data['input']}" }))
 ```
 
-Scripts in `scripts/` are never autoloaded — they are run as subprocesses by `ScriptRunner`. Script results are memoized per task execution.
+Scripts in `scripts/` are never autoloaded — they run as subprocesses. Results are memoized per task execution.
+
+---
+
+## Environment variables
+
+Each project has a `.env` file (git-ignored) for local secrets:
+
+```bash
+# .env
+JIRA_MCP_URL=https://...
+GITLAB_URL=https://xdevteam.com
+GITLAB_TOKEN=your_token
+```
+
+Commit `.env.example` with empty values as a template for teammates. `config/frai.rb` loads `.env` automatically on startup.
+
+---
+
+## External MCP servers
+
+Declare required MCP servers in `mcp/*.rb`. Supports both HTTP and stdio transports:
+
+```ruby
+# mcp/jira.rb — HTTP (hosted)
+Frai::MCP.define :jira do
+  url ENV["JIRA_MCP_URL"]
+end
+
+# mcp/gitlab.rb — stdio (local)
+Frai::MCP.define :gitlab do
+  command "uv"
+  args    ["--directory", "~/softswiss/gitlab-mcp", "run", "main.py"]
+  env     GITLAB_URL: ENV["GITLAB_URL"], GITLAB_TOKEN: ENV["GITLAB_TOKEN"]
+end
+```
+
+Register with Claude CLI and disable approval prompts:
+
+```bash
+frai setup   # or: frai s
+```
+
+Run `frai setup` when:
+- After `frai new` — once MCP definitions are added
+- After adding a new `mcp/*.rb` file
+- After cloning the project on a new machine
+
+Analogous to `bundle install` — run when MCP dependencies change.
+
+---
+
+## Claude CLI integration
+
+Each task gets its own slash command. `frai gt` creates it automatically:
+
+```bash
+frai gt code_review
+# → creates task files
+# → creates .claude/commands/code_review.md
+```
+
+Invoke from Claude CLI **inside the project directory**:
+
+```
+/code_review task_id(PDB-111)
+/code_review task_id(PDB-111) lang(en)
+```
+
+Arguments use `name(value)` format — names match params declared in `task.rb`. Also supports `key:value` format:
+
+```
+/code_review task_id:PDB-111
+```
+
+If the command fails, Claude reports the error and stops — it does not retry or guess parameters.
 
 ---
 
 ## Pipelines
 
-A pipeline chains tasks sequentially. Each task's output becomes the next task's input:
+A pipeline chains tasks sequentially — output of each step becomes input of the next:
+
+```bash
+frai gp review_pipeline   # short for: frai generate pipeline
+```
 
 ```ruby
-class CompareObjectsPipeline < BasePipeline
+class ReviewPipeline < BasePipeline
   def call(input)
-    data   = FetchDataTask.call(input)
-    result = AnalyzeItemTask.call(data)
-    result
+    diff   = FetchDiffTask.call(input)
+    review = CodeReviewTask.call(diff)
+    review
   end
 end
 
-CompareObjectsPipeline.call("your input")
+ReviewPipeline.call("task_id(PDB-111)")
 ```
 
 ---
 
 ## Agents
 
-An agent orchestrates tasks dynamically — it can branch, loop, and decide what to call next:
+An agent orchestrates tasks dynamically — it can branch, loop, and decide what to call next based on intermediate results:
+
+```bash
+frai ga research_agent   # short for: frai generate agent
+```
 
 ```ruby
 class ResearchAgent < BaseAgent
@@ -222,7 +295,7 @@ class ResearchAgent < BaseAgent
   end
 end
 
-ResearchAgent.call("topic to research")
+ResearchAgent.call("some topic")
 ```
 
 ---
@@ -238,76 +311,29 @@ Frai.configure do |config|
 end
 ```
 
-The `:null` adapter returns the rendered prompt without making an LLM call — useful for testing and MCP mode.
+The `:null` adapter returns the rendered prompt without making an LLM call — useful for testing.
 
 ---
 
-## MCP server mode
-
-Expose all project tasks as tools for Claude CLI, Codex, or Cursor. Running `frai generate task` automatically registers the skill:
+## Removing a task
 
 ```bash
-frai generate task sum_numbers
-# → creates task files
-# → detects installed AI clients (Claude CLI, Codex, Cursor)
-# → registers MCP server for the project
-# → creates skill ~/.claude/skills/sum_numbers/ and/or ~/.codex/skills/sum_numbers/
-# → disables approval prompts
+frai rt code_review   # short for: frai remove task
 ```
 
-Each task gets its own skill. Invoke it by task name in Claude CLI:
+Removes the task directory and `.claude/commands/code_review.md`.
 
-```
-/sum_numbers input_numbers(1,2,3)
-```
+## Destroying a project
 
-Where `input_numbers` is the parameter name declared in `task.rb`. Required params missing → error.
-
-The skill automatically includes `_skill: "sum_numbers"` in every tool call — the MCP server rejects requests without it. Tools are only accessible through their skill.
-
----
-
-## Removing a task and its skill
-
-`frai generate task` creates files in several places. To fully undo, run from inside the project:
+Before deleting the project directory, clean up external artifacts:
 
 ```bash
-frai remove task analyze_item
-```
-
-This removes the task directory, MCP server registration, skill files, and all config entries across Claude CLI, Codex, and Cursor automatically.
-
-If you prefer to do it manually:
-
-**1. Delete task files:**
-```bash
-rm -rf tasks/<name>
-```
-
-**2. Remove MCP server:**
-```bash
-claude mcp remove <project_name>     # Claude CLI
-codex mcp remove <project_name>      # Codex CLI (if installed)
-# Cursor: edit ~/.cursor/mcp.json and remove the entry
-```
-
-**3. Remove skill:**
-```bash
-rm -rf ~/.claude/skills/<name>       # Claude CLI skill
-rm -rf ~/.codex/skills/<name>        # Codex skill (if installed)
-rm .cursor/rules/<name>.mdc          # Cursor rules (if exists)
-```
-
-**4. Remove entries from global config files:**
-```bash
-# ~/.claude/CLAUDE.md — delete the <!-- frai:<name> --> block
-# ~/.codex/config.toml — delete the [mcp_servers.<project_name>] block
-# AGENTS.md — delete the <!-- frai:<name> --> block
-```
-
-**5. Remove approval settings:**
-```bash
-# .claude/settings.local.json — remove "mcp__<project_name>__*" from permissions.allow
+cd my_project
+frai destroy
+# → removes MCP server registrations
+# → lists command files to be removed
+cd ..
+rm -rf my_project
 ```
 
 ---
@@ -317,14 +343,14 @@ rm .cursor/rules/<name>.mdc          # Cursor rules (if exists)
 | Command | Description |
 |---|---|
 | `frai new PROJECT_NAME` | Create a new project (`frai n`) |
-| `frai generate task NAME` | Generate a task + register skill (`frai g task`, `frai gt`) |
-| `frai generate pipeline NAME` | Generate a pipeline (`frai g pipeline`, `frai gp`) |
-| `frai generate agent NAME` | Generate an agent (`frai g agent`, `frai ga`) |
-| `frai generate skill NAME` | Register project as a skill (`frai g skill`) |
-| `frai remove task NAME` | Remove a task and clean up skill, MCP, and config entries (`frai r task`, `frai rt`) |
+| `frai generate task NAME` | Generate a task + Claude CLI command (`frai gt`) |
+| `frai generate pipeline NAME` | Generate a pipeline (`frai gp`) |
+| `frai generate agent NAME` | Generate an agent (`frai ga`) |
+| `frai remove task NAME` | Remove a task and its Claude CLI command (`frai rt`) |
+| `frai setup` | Register `mcp/*.rb` servers with Claude CLI, disable approval prompts (`frai s`) |
+| `frai destroy` | Clean up MCP servers and commands before deleting the project |
 | `frai exec CLASS_NAME [INPUT]` | Execute a task, pipeline, or agent (`frai e`) |
 | `frai console` | Interactive Ruby console with project loaded (`frai c`) |
-| `frai serve --dir PATH` | Start MCP server (`frai s`) |
 
 ---
 

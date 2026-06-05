@@ -10,9 +10,11 @@ require "frai"
 #
 # Example:
 #   class CompareObjectsPipeline < BasePipeline
-#     step FetchDataTask
-#     step AnalyzeItemTask
-#     step FormatResultTask
+#     def call(input)
+#       result = FetchDataTask.call(input)
+#       result = AnalyzeItemTask.call(result)
+#       FormatResultTask.call(result)
+#     end
 #   end
 #
 #   CompareObjectsPipeline.call("some input")

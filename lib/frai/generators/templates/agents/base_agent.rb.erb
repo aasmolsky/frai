@@ -5,15 +5,18 @@ require "frai"
 #
 #   frai generate agent my_agent_name
 #
-# An agent orchestrates tasks and tools dynamically.
-# Unlike pipelines, agents can make decisions and loop based on LLM responses.
+# An agent orchestrates tasks dynamically — it can branch, loop,
+# and decide what to call next based on intermediate results.
 #
 # Example:
-#   class ObjectComparisonAgent < BaseAgent
-#     tool FetchDataTask
-#     tool AnalyzeItemTask
+#   class ResearchAgent < BaseAgent
+#     def call(input)
+#       data    = FetchDataTask.call(input)
+#       summary = SummarizeTask.call(data)
+#       summary
+#     end
 #   end
 #
-#   ObjectComparisonAgent.call("compare object_a, object_b, object_c")
+#   ResearchAgent.call("topic to research")
 class BaseAgent < Frai::Agent
 end
