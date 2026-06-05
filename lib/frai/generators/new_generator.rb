@@ -32,7 +32,6 @@ module Frai
           tasks
           pipelines
           agents
-          tools
           scripts
           mcp
           config

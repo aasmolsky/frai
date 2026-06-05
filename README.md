@@ -249,21 +249,21 @@ Expose all project tasks as tools for Claude CLI, Codex, or Cursor. Running `fra
 ```bash
 frai generate task sum_numbers
 # → creates task files
-# → detects installed AI clients
-# → registers MCP server
-# → creates skill in ~/.claude/skills/ and/or ~/.codex/skills/
-# → disables approval prompts for this project
+# → detects installed AI clients (Claude CLI, Codex, Cursor)
+# → registers MCP server for the project
+# → creates skill ~/.claude/skills/sum_numbers/ and/or ~/.codex/skills/sum_numbers/
+# → disables approval prompts
 ```
 
-Then in Claude CLI:
+Each task gets its own skill. Invoke it by task name in Claude CLI:
 
 ```
-/my_project sum_numbers(1,2,3)
+/sum_numbers input_numbers(1,2,3)
 ```
 
-Parameters are passed in `name(value)` format. Required params missing → error.
+Where `input_numbers` is the parameter name declared in `task.rb`. Required params missing → error.
 
-The skill automatically includes `_skill: "my_project"` in every tool call — the MCP server rejects requests without it. Tools are only accessible through the skill.
+The skill automatically includes `_skill: "sum_numbers"` in every tool call — the MCP server rejects requests without it. Tools are only accessible through their skill.
 
 ---
 
