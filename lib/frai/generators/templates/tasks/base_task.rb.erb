@@ -40,8 +40,8 @@ require "frai"
 #          params do
 #            required :query, String
 #          end
-#          directive :fetch do
-#            script :get_data do
+#          use :fetch do
+#            run :get_data do
 #              input   String
 #              returns data: String
 #            end
@@ -50,8 +50,8 @@ require "frai"
 #      end
 #
 # In directive templates:
-#   script(:get_data).with(:query).and_return(:data)
-#   directive(:fetch).with(:query).and_return(:data)
+#   run(:get_data).with(:query).and_return(:data)
+#   use(:fetch).with(:query).and_return(:data)
 #   <%%= data %>
 class BaseTask < Frai::Task
 end

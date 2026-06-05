@@ -95,10 +95,10 @@ class CodeReviewTask < BaseTask
       optional :lang,    String, default: "en"
     end
 
-    directive :check_resources
+    use :check_resources
 
-    directive :context do
-      script :fetch_diff do
+    use :context do
+      run :fetch_diff do
         input   String
         returns diff: String
       end
@@ -126,7 +126,7 @@ You are a senior engineer performing a code review for task <%= task_id %>.
 ### Scripts
 
 ```erb
-<% script(:fetch_diff).with(:task_id).and_return(:diff) %>
+<% run(:fetch_diff).with(:task_id).and_return(:diff) %>
 <%= diff %>
 ```
 
@@ -136,17 +136,17 @@ You are a senior engineer performing a code review for task <%= task_id %>.
 ### Sub-directives
 
 ```erb
-<%= directive(:check_resources) %>
-<% directive(:context).with(:task_id).and_return(:diff) %>
+<%= use(:check_resources) %>
+<% use(:context).with(:task_id).and_return(:diff) %>
 ```
 
 ### Conditional logic
 
 ```erb
 <% if score > threshold %>
-  <%= directive(:high_score).with(:score) %>
+  <%= use(:high_score).with(:score) %>
 <% else %>
-  <%= directive(:low_score).with(:score) %>
+  <%= use(:low_score).with(:score) %>
 <% end %>
 ```
 

@@ -23,8 +23,8 @@ module Frai
   #       params do
   #         required :input_numbers, String
   #       end
-  #       directive :sum do
-  #         script :parse_numbers do
+  #       use :sum do
+  #         run :parse_numbers do
   #           input   String
   #           returns parsed_numbers: [Integer]
   #         end
