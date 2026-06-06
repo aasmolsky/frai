@@ -23,7 +23,7 @@ module Frai
   #   end
   module MCP
     class ServerDefinition
-      attr_reader :name, :type, :url_value, :command_value, :args_value, :env_value, :oauth_enabled
+      attr_reader :name, :type, :url_value, :command_value, :args_value, :env_value, :oauth_enabled, :description
 
       def initialize(name)
         @name          = name
@@ -33,6 +33,11 @@ module Frai
         @args_value    = []
         @env_value     = {}
         @oauth_enabled = false
+        @description   = nil
+      end
+
+      def desc(text)
+        @description = text
       end
 
       def url(value)

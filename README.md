@@ -100,16 +100,16 @@ AnalyzeItemTask.call("some input")
 ### With params, constants, MCP, sub-directives and scripts
 
 ```ruby
-class CodeReviewTask < BaseTask
-  mcp :jira     # declared MCP dependencies
-  mcp :gitlab
+class AnalyzeItemTask < BaseTask
+  mcp :database   # declared MCP dependencies
+  mcp :search
 
   const :max_issues, 10   # available in all directives
 
   directive :main do
     params do
-      required :task_id, String
-      optional :lang,    String, default: "en"
+      required :query, String
+      optional :lang,  String, default: "en"
     end
 
     use :check_resources   # sub-directive
@@ -198,7 +198,7 @@ Before starting, verify that required MCP tools are accessible.
 Scripts receive `{ input: value }` as JSON on stdin and write a JSON hash to stdout:
 
 ```ruby
-# tasks/code_review/scripts/fetch_diff.rb
+# tasks/analyze_item/scripts/fetch_data.rb
 require 'json'
 input = JSON.parse($stdin.read, symbolize_names: true)[:input]
 puts JSON.generate({ diff: "diff for #{input}" })
@@ -301,20 +301,20 @@ When `oauth true` is set, frai manages tokens automatically:
 Each task gets its own slash command — created automatically by `frai gt`:
 
 ```bash
-frai gt code_review
+frai gt analyze_item
 # → creates task files
-# → creates .claude/commands/code_review.md
+# → creates .claude/commands/analyze_item.md
 ```
 
 Invoke from Claude CLI **inside the project directory**:
 
 ```
-/code_review task_id(PDB-111)
-/code_review task_id(PDB-111) lang(en)
+/analyze_item query(some text)
+/analyze_item query(some text) lang(en)
 ```
 
 Arguments use `name(value)` format — names match params declared in `task.rb`.
-Also supports `key:value` format: `/code_review task_id:PDB-111`
+Also supports `key:value` format: `/analyze_item query:some-text`
 
 If the command fails, Claude reports the error and stops — it does not retry or guess parameters.
 
@@ -359,10 +359,10 @@ end
 ## Removing a task
 
 ```bash
-frai rt code_review   # short for: frai remove task
+frai rt analyze_item   # short for: frai remove task
 ```
 
-Removes the task directory and `.claude/commands/code_review.md`.
+Removes the task directory and `.claude/commands/analyze_item.md`.
 
 ## Destroying a project
 
@@ -377,22 +377,96 @@ rm -rf my_project
 
 ---
 
+## Project discovery
+
+`frai list` (alias: `frai l`) shows everything in the project at a glance:
+
+```
+Tasks:
+
+  # Fetches and analyzes data from an external source
+  analyze_item
+    params:
+      - query(required, String)
+      - lang(optional, String, default: "en")
+    mcp:
+      - database (http/oauth)
+      - search (stdio)
+    directives:
+      # Shared rules applied to all analyses
+      - guidelines
+    scripts:
+      # Fetches raw data from the external API
+      - fetch_data
+
+MCP servers:
+
+  # Hosted database MCP with OAuth
+  - database  HTTP/oauth
+      https://mcp.example.com/servers/abc123/mcp
+
+Shared directives:
+  - base
+```
+
+### Adding descriptions
+
+**Task** — add `<desc>` tag at the top of `main.md.erb`:
+```erb
+<desc>Fetches and analyzes data from an external source</desc>
+
+You are an expert analyst...
+```
+
+**Sub-directive** — same `<desc>` tag in the directive file:
+```erb
+<desc>Shared rules applied to all analyses</desc>
+
+1) Always cite sources...
+```
+
+**Script** — `# desc:` comment at the top of the script (works for Ruby, Python, bash):
+```python
+# desc: Fetches raw data from the external API
+import sys, json
+...
+```
+
+**MCP server** — `desc` in the server definition:
+```ruby
+Frai::MCP.define :database do
+  desc "Hosted database MCP with OAuth"
+  url ENV["DATABASE_MCP_URL"]
+  oauth true
+end
+```
+
+**Pipeline / Agent** — `# desc:` comment before the class:
+```ruby
+# desc: Chains fetch and analysis tasks sequentially
+class AnalysisPipeline < BasePipeline
+  ...
+end
+```
+
+---
+
 ## Logging
 
 Write task output and errors to a log file — useful for cron jobs and automation:
 
 ```bash
-frai exec CodeReviewTask "task_id(PDB-111)" --log logs/reviews.log
+frai exec AnalyzeItemTask "query(some text)" --log logs/analyze.log
 ```
 
 Directories are created automatically if they don't exist. Each entry includes a timestamp and status:
 
 ```
 [2026-06-06 08:00:00] [SUCCESS]
-Code review for PDB-111...
+Analysis complete for query: some text...
 ------------------------------------------------------------
 [2026-06-06 09:00:00] [ERROR]
-Error: MCP :jira OAuth failed — token expired
+Error: MCP :database OAuth failed — token expired
 ------------------------------------------------------------
 ```
 
@@ -409,6 +483,7 @@ Error: MCP :jira OAuth failed — token expired
 | `frai remove task NAME` | Remove a task and its Claude CLI command (`frai rt`) |
 | `frai setup` | Register `mcp/*.rb` servers with Claude CLI (`frai s`) |
 | `frai destroy` | Clean up MCP servers and commands before deleting the project |
+| `frai list` | List all tasks, MCPs, pipelines, agents and shared directives (`frai l`) |
 | `frai exec CLASS_NAME [INPUT]` | Execute a task, pipeline, or agent (`frai e`) |
 | `frai exec ... --log PATH` | Execute and write output/errors to log file |
 | `frai console` | Interactive Ruby console with project loaded (`frai c`) |

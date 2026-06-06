@@ -53,6 +53,79 @@ module Frai
       Frai::Generators::ProjectDestroyer.new.destroy
     end
 
+    desc "list", "List all tasks, MCP servers and shared directives in the project"
+    def list
+      load_project!
+
+      puts "\nTasks:\n"
+      task_classes.each do |klass|
+        task      = klass.task_name
+        decl      = klass._directive_declaration
+        root      = Frai.configuration.project_root
+        task_desc = read_directive_desc(root, task, :main)
+
+        params  = format_params(decl&.params_declaration)
+        mcps    = klass._mcps.map { |m|
+          s = Frai::MCP.find(m)
+          "#{m}#{s ? " (#{s.type}#{s.oauth_enabled ? '/oauth' : ''})" : ''}"
+        }.join(", ")
+        puts "  # #{task_desc}" if task_desc
+        puts "  #{task}"
+        print_list("params", params_array(decl&.params_declaration))
+        print_list("mcp",    klass._mcps.map { |m|
+          s = Frai::MCP.find(m)
+          "#{m}#{s ? " (#{s.type}#{s.oauth_enabled ? '/oauth' : ''})" : ''}"
+        }) unless klass._mcps.empty?
+        print_directives(decl, root, task)
+        print_scripts(decl, root, task)
+        puts
+      end
+
+      pipelines = ObjectSpace.each_object(Class)
+                             .select { |k| k < Frai::Pipeline && k.name && !k.name.start_with?("Base") }
+                             .sort_by(&:name)
+      unless pipelines.empty?
+        puts "Pipelines:\n"
+        pipelines.each do |klass|
+          desc = read_class_desc(klass)
+          puts desc ? "  #{klass.name} — #{desc}" : "  #{klass.name}"
+        end
+        puts
+      end
+
+      agents = ObjectSpace.each_object(Class)
+                          .select { |k| k < Frai::Agent && k.name && !k.name.start_with?("Base") }
+                          .sort_by(&:name)
+      unless agents.empty?
+        puts "Agents:\n"
+        agents.each do |klass|
+          desc = read_class_desc(klass)
+          puts desc ? "  #{klass.name} — #{desc}" : "  #{klass.name}"
+        end
+        puts
+      end
+
+      puts "MCP servers:\n"
+      Frai::MCP.all.each do |s|
+        transport = s.type.to_s.upcase
+        auth      = s.oauth_enabled ? "/oauth" : ""
+        location  = s.type == :http ? s.url_value.to_s : "#{s.command_value} #{s.args_value.join(' ')}"
+        puts "  # #{s.description}" if s.description
+        puts "  - #{s.name}  #{transport}#{auth}"
+        puts "      #{location}"
+      end
+
+      puts "\nShared directives:\n"
+      shared = Dir.glob(File.join(Frai.configuration.project_root, "directives", "*.md.erb"))
+      shared.each do |f|
+        name = File.basename(f, ".md.erb")
+        desc = read_directive_desc(Frai.configuration.project_root, nil, name) rescue nil
+        puts "  # #{desc}" if desc
+        puts "  - #{name}"
+      end
+      puts
+    end
+
     desc "remove task TASK_NAME", "Remove a task and its Claude CLI command"
     def remove(type, task_name)
       abort "Error: unknown type '#{type}'. Use: task" unless type == "task"
@@ -145,6 +218,7 @@ module Frai
       IRB.start(__FILE__)
     end
 
+    map "l"  => "list"
     map "g"  => "generate"
     map "r"  => "remove"
     map "c"  => "console"
@@ -169,6 +243,114 @@ module Frai
     end
 
     private
+
+    def task_classes
+      ObjectSpace.each_object(Class)
+                 .select { |k| k < Frai::Task && k.name && !k.name.start_with?("Base") }
+                 .sort_by(&:name)
+    end
+
+    def params_array(decl)
+      return [] unless decl
+      required = decl.required_params.map { |n, t| "#{n}(required, #{t})" }
+      optional = decl.optional_params.map { |n, o|
+        default = o[:default].nil? ? "" : ", default: #{o[:default].inspect}"
+        "#{n}(optional, #{o[:type]}#{default})"
+      }
+      required + optional
+    end
+
+    def format_params(decl)
+      params_array(decl).join(", ")
+    end
+
+    def format_directives(decl)
+      return "" unless decl
+      decl.sub_directives.keys.map(&:to_s).join(", ")
+    end
+
+    def print_directives(decl, root, task_name)
+      return unless decl
+      dirs = decl.sub_directives.keys
+      return if dirs.empty?
+      puts "    directives:"
+      dirs.each do |name|
+        desc = read_directive_desc(root, task_name, name)
+        puts "      # #{desc}" if desc
+        puts "      - #{name}"
+      end
+    end
+
+    def format_scripts(decl)
+      return "" unless decl
+      collect_scripts(decl).map(&:to_s).join(", ")
+    end
+
+    # Extract # desc: from a Ruby class file (pipeline, agent)
+    def read_class_desc(klass)
+      path = klass.instance_method(:call).source_location&.first rescue nil
+      return nil unless path && File.exist?(path)
+      File.foreach(path).first(10).each do |line|
+        m = line.match(/^\s*#\s*desc:\s*(.+)/)
+        return m[1].strip if m
+      end
+      nil
+    rescue
+      nil
+    end
+
+    # Extract <desc>...</desc> from a directive template
+    def read_directive_desc(root, task_name, directive_name)
+      candidates = task_name ? [
+        File.join(root, "tasks", task_name, "directives", "#{directive_name}.md.erb"),
+        File.join(root, "tasks", task_name, "directives", "#{directive_name}.erb")
+      ] : []
+      candidates += [File.join(root, "directives", "#{directive_name}.md.erb")]
+      path = candidates.find { |p| File.exist?(p) }
+      return nil unless path
+      content = File.read(path)
+      m = content.match(/<desc>(.*?)<\/desc>/m)
+      m ? m[1].strip : nil
+    rescue
+      nil
+    end
+
+    # Extract # desc: from a script file
+    def read_script_desc(path)
+      return nil unless File.exist?(path)
+      File.foreach(path).first(5).each do |line|
+        m = line.match(/^\s*#\s*desc:\s*(.+)/)
+        return m[1].strip if m
+      end
+      nil
+    rescue
+      nil
+    end
+
+    def print_list(label, items)
+      return if items.empty?
+      puts "    #{label}:"
+      items.each { |i| puts "      - #{i}" }
+    end
+
+    def print_scripts(decl, root, task_name)
+      return unless decl
+      names = collect_scripts(decl)
+      return if names.empty?
+      puts "    scripts:"
+      names.each do |n|
+        script_path = Dir.glob(File.join(root, "tasks", task_name, "scripts", "#{n}.*")).first
+        desc = script_path ? read_script_desc(script_path) : nil
+        puts "      # #{desc}" if desc
+        puts "      - #{n}"
+      end
+    end
+
+    def collect_scripts(decl)
+      names = decl.script_declarations.keys
+      decl.sub_directives.each_value { |sub| names += collect_scripts(sub) }
+      names.uniq
+    end
 
     def log_message(path, message, success:)
       return unless path
