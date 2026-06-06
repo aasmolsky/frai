@@ -2,35 +2,48 @@
 
 module Frai
   # Registry of external MCP server definitions required by the project.
-  # Declared in mcp/*.rb files. Used by `frai setup` to register them
-  # with AI clients (Claude CLI, Codex, etc.).
+  # Declared in mcp/*.rb files.
   #
-  # @example mcp/jira.rb
+  # Used for:
+  #   1. Registering with Claude CLI/Codex via `frai setup`
+  #   2. Passing to RubyLLM as tools in API mode (via ruby_llm-mcp)
+  #
+  # @example mcp/jira.rb — stdio server
   #   Frai::MCP.define :jira do
   #     command "uv"
-  #     args    ["--directory", "~/softswiss/jira-mcp", "run", "main.py"]
+  #     args    ["--directory", "~/tools/jira-mcp", "run", "main.py"]
   #     env     JIRA_URL: ENV["JIRA_URL"], JIRA_TOKEN: ENV["JIRA_TOKEN"]
+  #   end
+  #
+  # @example mcp/gitlab.rb — stdio server
+  #   Frai::MCP.define :gitlab do
+  #     command "uv"
+  #     args    ["--directory", "~/tools/gitlab-mcp", "run", "main.py"]
+  #     env     GITLAB_TOKEN: ENV["GITLAB_TOKEN"]
   #   end
   module MCP
     class ServerDefinition
-      attr_reader :name, :type, :url_value, :command_value, :args_value, :env_value
+      attr_reader :name, :type, :url_value, :command_value, :args_value, :env_value, :oauth_enabled
 
       def initialize(name)
         @name          = name
-        @type          = :stdio       # :stdio or :http
+        @type          = :stdio
         @url_value     = nil
         @command_value = nil
         @args_value    = []
         @env_value     = {}
+        @oauth_enabled = false
       end
 
-      # For HTTP MCP servers (streamablehttp)
       def url(value)
         @type      = :http
         @url_value = value
       end
 
-      # For stdio MCP servers
+      def oauth(enabled = true)
+        @oauth_enabled = enabled
+      end
+
       def command(value)
         @command_value = value
       end

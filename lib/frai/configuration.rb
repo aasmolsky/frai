@@ -2,27 +2,28 @@ module Frai
   # Holds global Frai configuration.
   # Set via Frai.configure block in config/frai.rb.
   #
-  # @example
+  # @example Without model (CLI mode — prompt returned as-is):
   #   Frai.configure do |config|
-  #     config.adapter = :anthropic
-  #     config.model   = "claude-opus-4-6"
-  #     config.api_key = ENV["ANTHROPIC_API_KEY"]
+  #     config.model = nil
+  #   end
+  #
+  # @example With model (API mode — RubyLLM calls the LLM):
+  #   Frai.configure do |config|
+  #     config.model   = ENV["LLM_MODEL"]    # e.g. "claude-opus-4-6"
+  #     config.api_key = ENV["API_KEY"]
   #   end
   class Configuration
-    # LLM adapter to use: :anthropic, :openai, :ollama, :null (for testing)
-    attr_accessor :adapter
-
-    # Model name passed directly to the provider API
+    # LLM model name. If nil — prompt is returned as-is (CLI mode).
+    # If set — RubyLLM calls the provider API with this model.
     attr_accessor :model
 
-    # API key for the LLM provider
+    # API key for the LLM provider. Read from ENV["API_KEY"] by default.
     attr_accessor :api_key
 
-    # Root directory of the current project (auto-detected)
+    # Root directory of the current project (auto-detected).
     attr_accessor :project_root
 
     def initialize
-      @adapter      = nil
       @model        = nil
       @api_key      = nil
       @project_root = Dir.pwd
@@ -30,13 +31,11 @@ module Frai
   end
 
   class << self
-    # Returns the current configuration.
     # @return [Frai::Configuration]
     def configuration
       @configuration ||= Configuration.new
     end
 
-    # Yields the configuration object for setup.
     # @yield [Frai::Configuration]
     def configure
       yield configuration
@@ -48,10 +47,8 @@ module Frai
     end
 
     # Auto-loads all Ruby files from project directories.
-    # Skips scripts/ folders entirely — scripts in any language live there
-    # and are run directly by ScriptRunner, never required.
-    # As an extra guard, raises an error if a Ruby file outside scripts/
-    # reads from stdin at the top level.
+    # Skips scripts/ folders — scripts run as subprocesses, never required.
+    # Raises if a Ruby file outside scripts/ reads from stdin at top level.
     #
     # @param root [String] project root directory
     def autoload!(root)

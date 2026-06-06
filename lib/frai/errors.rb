@@ -19,9 +19,6 @@ module Frai
   # Raised when a script's output doesn't match its declared returns schema
   class InvalidScriptOutput < Error; end
 
-  # Raised when the LLM adapter is not configured
-  class AdapterNotConfigured < Error; end
-
-  # Raised when the configured adapter gem is not installed
+  # Raised when ruby_llm gem is missing but model is configured
   class AdapterNotFound < Error; end
 end

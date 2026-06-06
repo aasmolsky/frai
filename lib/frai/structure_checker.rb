@@ -10,13 +10,39 @@ module Frai
       @project_root = Frai.configuration.project_root
     end
 
-    # Raises on the first missing file.
+    # Raises on the first missing file or MCP misconfiguration.
     def check!
       decl = @task_class._directive_declaration
       return unless decl
 
       find_directive!(:main)
       check_declaration!(decl)
+      check_mcp_declarations!
+    end
+
+    # Validates declared MCPs have corresponding mcp/*.rb definitions,
+    # and that all defined mcp/*.rb files are used by at least one task.
+    def self.check_mcp_consistency!(project_root)
+      # All defined MCP files
+      defined = Dir.glob(File.join(project_root, "mcp", "*.rb"))
+                   .map { |f| File.basename(f, ".rb").to_sym }
+
+      return if defined.empty?
+
+      # All MCPs declared across all tasks
+      declared = ObjectSpace.each_object(Class)
+                            .select { |k| k < Frai::Task && k.name }
+                            .flat_map(&:_mcps)
+                            .map(&:to_sym)
+                            .uniq
+
+      defined.each do |name|
+        unless declared.include?(name)
+          raise Frai::Error,
+            "mcp/#{name}.rb is defined but never declared in any task.\n" \
+            "Add `mcp :#{name}` to the task that uses it, or remove the file."
+        end
+      end
     end
 
     private
@@ -29,6 +55,17 @@ module Frai
 
       decl.script_declarations.each_key do |name|
         find_script!(name)
+      end
+    end
+
+    def check_mcp_declarations!
+      @task_class._mcps.each do |name|
+        path = File.join(@project_root, "mcp", "#{name}.rb")
+        next if File.exist?(path)
+
+        raise Frai::Error,
+          "Task #{@task_class} declares `mcp :#{name}` but mcp/#{name}.rb does not exist.\n" \
+          "Create the file or remove the declaration."
       end
     end
 
