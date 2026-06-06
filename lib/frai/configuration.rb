@@ -20,13 +20,35 @@ module Frai
     # API key for the LLM provider. Read from ENV["API_KEY"] by default.
     attr_accessor :api_key
 
+    # Environment: :development or :production (default).
+    # In development: OAuth MCP servers are skipped with a warning.
+    attr_accessor :env
+
     # Root directory of the current project (auto-detected).
     attr_accessor :project_root
 
     def initialize
       @model        = nil
       @api_key      = nil
+      @env          = (ENV["FRAI_ENV"] || "production").to_sym
       @project_root = Dir.pwd
+    end
+
+    def development?
+      @env == :development
+    end
+
+    def test?
+      @env == :test
+    end
+
+    def production?
+      @env == :production
+    end
+
+    # Both development and test skip MCPs and LLM calls
+    def non_production?
+      development? || test?
     end
   end
 

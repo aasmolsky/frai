@@ -125,8 +125,14 @@ module Frai
         self.class._constants
       )
 
-      mcp_servers = declared_mcp_servers
-      verify_mcp_servers!(mcp_servers)
+      if Frai.configuration.non_production?
+        warn "Frai [#{Frai.configuration.env}]: all MCPs skipped, LLM not called, returning rendered prompt."
+        mcp_servers = []
+      else
+        mcp_servers = declared_mcp_servers
+        verify_mcp_servers!(mcp_servers)
+      end
+
       prompt = renderer.render(decl, input)
       adapter.complete(prompt, mcp_servers: mcp_servers)
     end
@@ -173,6 +179,8 @@ module Frai
     end
 
     def adapter
+      return Frai::Adapters::Null.new if Frai.configuration.non_production?
+
       model = Frai.configuration.model
       return Frai::Adapters::Null.new unless model
 

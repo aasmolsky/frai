@@ -63,6 +63,26 @@ my_project/
 
 ---
 
+## Environments
+
+Frai supports three environments controlled by `FRAI_ENV` in `.env`:
+
+| `FRAI_ENV` | MCPs | LLM | Returns |
+|------------|------|-----|---------|
+| `development` | skipped | skipped | rendered prompt |
+| `test` | skipped | skipped | rendered prompt |
+| `production` | connected | called | LLM response |
+
+Default is `production`. In `development` and `test`, all MCP servers are skipped and the null adapter is used regardless of `LLM_MODEL` — you see the rendered prompt without any API calls.
+
+Override inline for a single run:
+```bash
+FRAI_ENV=production frai exec AnalyzeItemTask "query(test)"
+FRAI_ENV=development frai exec AnalyzeItemTask "query(test)"
+```
+
+---
+
 ## Two modes of operation
 
 **CLI mode** (`LLM_MODEL` not set in `.env`):
@@ -293,6 +313,11 @@ When `oauth true` is set, frai manages tokens automatically:
 - **Subsequent runs**: cached token used directly. Silent refresh attempted if expired.
 - **Token expired (refresh fails)**: browser opens again.
 - **For cron jobs**: authenticate once manually (`frai exec`), then cron uses the cached token.
+- **Token cache expired**: if both access and refresh tokens are no longer valid, delete the cache file and re-authenticate:
+  ```bash
+  rm .frai_oauth_cache.json
+  frai exec TaskName "param(value)"   # browser opens once
+  ```
 
 ---
 
