@@ -1,21 +1,21 @@
 # frozen_string_literal: true
 
-require "yaml"
+require "kdl"
 
 module Frai
   # Base class for all Frai tasks.
   #
-  # The task contract lives entirely in tasks/<name>/task.yml.
+  # The task contract lives entirely in tasks/<name>/task.kdl.
   # The Ruby class is a thin entrypoint only — it provides TaskNameTask.call(params).
-  # All params, directives, mcp and constants are declared in YAML.
+  # All params, directives, mcp and constants are declared in KDL.
   #
   # Calling convention:
   #   TaskNameTask.call("plain string input")
-  #   TaskNameTask.call(param_name: value, ...)   # when params declared in task.yml
+  #   TaskNameTask.call(param_name: value, ...)   # when params declared in task.kdl
   #
   # Execution order:
-  #   1. Load and hydrate task.yml
-  #   2. Validate params against task.yml declarations
+  #   1. Load and parse task.kdl
+  #   2. Validate params against task.kdl declarations
   #   3. Check structure (all declared files exist)
   #   4. Render directives (scripts run lazily inside renderer)
   #   5. Call LLM via configured adapter
@@ -42,19 +42,19 @@ module Frai
 
       # @return [Array<Symbol>]
       def _mcps
-        load_yaml_definition!
+        load_kdl_definition!
         @_mcps
       end
 
       # @return [Hash]
       def _constants
-        load_yaml_definition!
+        load_kdl_definition!
         @_constants
       end
 
       # @return [Frai::DirectiveDeclaration, nil]
       def _directive_declaration
-        load_yaml_definition!
+        load_kdl_definition!
         @_directive_declaration
       end
 
@@ -66,7 +66,7 @@ module Frai
 
       # Checks structure once per project_root. Subsequent calls are no-ops.
       def ensure_structure_checked!
-        load_yaml_definition!
+        load_kdl_definition!
         return if @_structure_checked_for == Frai.configuration.project_root
         StructureChecker.new(self).check!
         @_structure_checked_for = Frai.configuration.project_root
@@ -82,208 +82,132 @@ module Frai
         File.join(Frai.configuration.project_root, "tasks", task_name)
       end
 
-      # Returns the YAML path for this task.
-      # Raises if neither task.yml nor task.yaml is found.
-      def task_yaml_path
-        path = %w[task.yml task.yaml]
-                 .map { |file| File.join(task_root, file) }
-                 .find { |p| File.exist?(p) }
+      # Returns the KDL path for this task.
+      # Raises if task.kdl is not found.
+      def task_kdl_path
+        path = File.join(task_root, "task.kdl")
+        return path if File.exist?(path)
 
-        path || raise(Frai::Error,
-          "task.yml not found for #{self}.\n" \
-          "Expected: #{File.join(task_root, 'task.yml')}")
+        raise(Frai::Error,
+          "task.kdl not found for #{self}.\n" \
+          "Expected: #{path}")
       end
 
-      # Loads task.yml once per project_root and hydrates runtime declarations.
+      # Loads task.kdl once per project_root and hydrates runtime declarations.
       # Automatically reloads when project_root changes (e.g. between test examples).
-      def load_yaml_definition!
+      def load_kdl_definition!
         current_root = Frai.configuration.project_root
-        return if @_yaml_loaded_for == current_root
+        return if @_kdl_loaded_for == current_root
 
-        spec = YAML.safe_load(File.read(task_yaml_path), aliases: true) || {}
-        hydrate_from_yaml!(spec)
-        @_yaml_loaded_for = current_root
+        doc = KDL.parse(File.read(task_kdl_path))
+        hydrate_from_kdl!(doc)
+        @_kdl_loaded_for = current_root
       end
 
       private
 
-      def hydrate_from_yaml!(spec)
-        spec = symbolize_keys(spec)
+      def hydrate_from_kdl!(doc)
+        task_node = doc.nodes.find { |n| n.name == "task" }
+        raise Frai::Error, "No 'task' node found in task.kdl for #{task_name}" unless task_node
 
-        yaml_name = spec[:name]&.to_s
-        if yaml_name && yaml_name != task_name
+        kdl_name = prop(task_node, "name")
+        if kdl_name && kdl_name != task_name
           raise Frai::Error,
-            "task.yml name '#{yaml_name}' does not match #{self} task name '#{task_name}'."
+            "task.kdl name '#{kdl_name}' does not match #{self} task name '#{task_name}'."
         end
 
-        @_mcps      = Array(spec[:mcp]).map(&:to_sym)
-        @_constants = symbolize_keys(spec[:constants] || {})
+        @_mcps = kdl_children(task_node, "mcp").map { |n| arg(n).to_sym }
 
-        directives = symbolize_keys(spec[:directives] || spec[:directive] || {})
-        @_directive_declaration = build_directive(:main, directives[:main] || {}) if directives.any?
+        @_constants = kdl_children(task_node, "const").each_with_object({}) do |n, h|
+          h[arg(n, 0).to_sym] = arg(n, 1)
+        end
+
+        main_node = kdl_children(task_node, "directive").find { |n| prop(n, "name") == "main" }
+        @_directive_declaration = build_directive_from_kdl(:main, main_node) if main_node
       end
 
-      def build_directive(name, spec)
+      def build_directive_from_kdl(name, node)
+        return nil unless node
+
         decl = DirectiveDeclaration.new(name)
-        apply_directive_spec(decl, spec)
+        apply_directive_kdl(decl, node)
         decl
       end
 
-      def apply_directive_spec(decl, spec)
-        spec = symbolize_keys(spec || {})
-        apply_params_spec(decl, spec[:params])
-        apply_nested_uses(decl, spec[:use] || spec[:uses])
-        apply_nested_runs(decl, spec[:run] || spec[:runs])
-      end
+      def apply_directive_kdl(decl, node)
+        return unless node
 
-      def apply_params_spec(decl, params_spec)
-        return if params_spec.nil?
+        param_nodes = kdl_children(node, "param")
+        if param_nodes.any?
+          decl.params do
+            param_nodes.each do |p|
+              param_name = Frai::Task.send(:prop, p, "name").to_sym
+              type_str   = Frai::Task.send(:prop, p, "type")
+              required   = Frai::Task.send(:prop, p, "required")
+              default    = Frai::Task.send(:prop, p, "default")
+              type       = Frai::Task.send(:resolve_type, type_str)
 
-        params_spec = symbolize_keys(params_spec)
-
-        decl.params do
-          if params_spec.key?(:required) || params_spec.key?(:optional)
-            Frai::Task.send(:apply_grouped_params, self, params_spec)
-          else
-            params_spec.each do |param_name, param_spec|
-              Frai::Task.send(:apply_single_param, self, param_name, param_spec)
+              if required == false
+                optional(param_name, type, default: default)
+              else
+                required(param_name, type)
+              end
             end
           end
         end
-      end
 
-      def apply_grouped_params(params_decl, params_spec)
-        each_param_entry(params_spec[:required]).each do |param_name, param_spec|
-          apply_required_param(params_decl, param_name, param_spec)
+        kdl_children(node, "use").each do |use_node|
+          use_name = (prop(use_node, "name") || arg(use_node)).to_sym
+          decl.use(use_name) do
+            Frai::Task.send(:apply_directive_kdl, self, use_node)
+          end
         end
 
-        each_param_entry(params_spec[:optional]).each do |param_name, param_spec|
-          apply_optional_param(params_decl, param_name, param_spec)
-        end
-      end
-
-      def apply_single_param(params_decl, param_name, param_spec)
-        param_spec = param_spec.is_a?(Hash) ? symbolize_keys(param_spec) : { type: param_spec }
-
-        if param_spec.key?(:required) && !param_spec[:required]
-          apply_optional_param(params_decl, param_name, param_spec)
-        else
-          apply_required_param(params_decl, param_name, param_spec)
-        end
-      end
-
-      def apply_required_param(params_decl, param_name, param_spec)
-        param_spec = param_spec.is_a?(Hash) ? symbolize_keys(param_spec) : { type: param_spec }
-        type = resolve_type(param_spec[:type] || param_spec)
-        params_decl.required(param_name.to_sym, type)
-      end
-
-      def apply_optional_param(params_decl, param_name, param_spec)
-        param_spec = param_spec.is_a?(Hash) ? symbolize_keys(param_spec) : { type: param_spec }
-        type = resolve_type(param_spec[:type] || param_spec)
-        params_decl.optional(param_name.to_sym, type, default: param_spec[:default])
-      end
-
-      def apply_nested_uses(decl, uses_spec)
-        return if uses_spec.nil?
-
-        each_named_entry(uses_spec).each do |child_name, child_spec|
-          decl.use(child_name.to_sym) do
-            Frai::Task.send(:apply_directive_spec, self, child_spec)
+        kdl_children(node, "run").each do |run_node|
+          script_name = prop(run_node, "name").to_sym
+          decl.run(script_name) do
+            Frai::Task.send(:apply_script_kdl, self, run_node)
           end
         end
       end
 
-      def apply_nested_runs(decl, runs_spec)
-        return if runs_spec.nil?
+      def apply_script_kdl(script_decl, node)
+        input_node = kdl_child(node, "input")
+        if input_node
+          script_decl.input(resolve_type(prop(input_node, "type")))
+        end
 
-        each_named_entry(runs_spec).each do |script_name, script_spec|
-          decl.run(script_name.to_sym) do
-            Frai::Task.send(:apply_script_spec, self, script_spec)
+        returns_nodes = kdl_children(node, "returns")
+        if returns_nodes.any?
+          schema = returns_nodes.each_with_object({}) do |r, h|
+            h[prop(r, "name").to_sym] = resolve_type(prop(r, "type"))
           end
+          script_decl.returns(schema)
         end
       end
 
-      def apply_script_spec(script_decl, spec)
-        spec = symbolize_keys(spec || {})
+      # KDL helpers
 
-        input_spec = spec[:input] || spec[:params]
-        if input_spec
-          input_type = if input_spec.is_a?(Hash)
-                         input_spec[:type] || input_spec[:class] || input_spec
-                       else
-                         input_spec
-                       end
-          script_decl.input(resolve_type(input_type))
-        end
-
-        script_decl.returns(normalize_returns_spec(spec[:returns])) if spec[:returns]
+      def prop(node, key)
+        node.properties[key]&.value
       end
 
-      def normalize_returns_spec(returns_spec)
-        case returns_spec
-        when Hash
-          symbolize_keys(returns_spec).each_with_object({}) do |(key, value), hash|
-            hash[key.to_sym] = normalize_return_value(value)
-          end
-        else
-          returns_spec
-        end
+      def arg(node, index = 0)
+        node.arguments[index]&.value
       end
 
-      def normalize_return_value(value)
-        value = symbolize_keys(value) if value.is_a?(Hash)
-
-        case value
-        when Hash
-          if value.key?(:type)
-            resolve_type(value[:type])
-          else
-            value.transform_values { |nested| normalize_return_value(nested) }
-          end
-        else
-          resolve_type(value)
-        end
+      def kdl_children(node, name)
+        (node&.children || []).select { |n| n.name == name }
       end
 
-      def each_named_entry(spec)
-        case spec
-        when Hash
-          symbolize_keys(spec)
-        when Array
-          spec.each_with_object({}) do |entry, hash|
-            if entry.is_a?(Hash)
-              symbolize_keys(entry).each { |name, value| hash[name] = value }
-            else
-              hash[entry.to_sym] = {}
-            end
-          end
-        else
-          {}
-        end
-      end
-
-      def each_param_entry(spec)
-        case spec
-        when Hash
-          symbolize_keys(spec)
-        when Array
-          spec.each_with_object({}) do |entry, hash|
-            if entry.is_a?(Hash)
-              symbolize_keys(entry).each { |name, value| hash[name] = value }
-            else
-              hash[entry.to_sym] = {}
-            end
-          end
-        else
-          {}
-        end
+      def kdl_child(node, name)
+        (node&.children || []).find { |n| n.name == name }
       end
 
       def resolve_type(value)
+        return nil if value.nil?
+
         case value
-        when nil
-          nil
         when Array
           value.map { |item| resolve_type(item) }
         when String, Symbol
@@ -292,20 +216,7 @@ module Frai
           value
         end
       rescue NameError
-        raise Frai::Error, "Unknown type '#{value}' in YAML task definition for #{task_name}"
-      end
-
-      def symbolize_keys(value)
-        case value
-        when Hash
-          value.each_with_object({}) do |(key, val), hash|
-            hash[key.to_sym] = symbolize_keys(val)
-          end
-        when Array
-          value.map { |item| symbolize_keys(item) }
-        else
-          value
-        end
+        raise Frai::Error, "Unknown type '#{value}' in task.kdl for #{task_name}"
       end
     end
 

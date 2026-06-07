@@ -7,7 +7,7 @@ require "fileutils"
 class CodeReviewTask < Frai::Task; end
 class SumNumbersTask < Frai::Task; end
 
-RSpec.describe "Frai YAML task loading" do
+RSpec.describe "Frai KDL task loading" do
   after { Frai.reset! }
 
   around do |example|
@@ -16,52 +16,40 @@ RSpec.describe "Frai YAML task loading" do
       FileUtils.mkdir_p(File.join(root, "tasks", "sum_numbers"))
 
       File.write(
-        File.join(root, "tasks", "code_review", "task.yml"),
-        <<~YAML
-          name: code_review
+        File.join(root, "tasks", "code_review", "task.kdl"),
+        <<~KDL
+          task name="code_review" {
+            mcp "jira"
+            mcp "gitlab"
 
-          mcp:
-            - jira
-            - gitlab
+            const "high_value_threshold" 10
 
-          constants:
-            high_value_threshold: 10
+            directive name="main" {
+              param name="task_id" required=true type="String"
 
-          directives:
-            main:
-              params:
-                task_id:
-                  required: true
-                  type: String
+              use name="code_style_guides" {
+                use name="naming_rules"
+                use name="formatting_rules"
+              }
 
-              use:
-                code_style_guides:
-                  use:
-                    naming_rules:
-                    formatting_rules:
-
-              run:
-                analyze_diff:
-                  input:
-                    type: String
-                  returns:
-                    diff_value:
-                      type: String
-        YAML
+              run name="analyze_diff" {
+                input type="String"
+                returns name="diff_value" type="String"
+              }
+            }
+          }
+        KDL
       )
 
       File.write(
-        File.join(root, "tasks", "sum_numbers", "task.yml"),
-        <<~YAML
-          name: sum_numbers
-
-          directives:
-            main:
-              params:
-                input_numbers:
-                  required: true
-                  type: String
-        YAML
+        File.join(root, "tasks", "sum_numbers", "task.kdl"),
+        <<~KDL
+          task name="sum_numbers" {
+            directive name="main" {
+              param name="input_numbers" required=true type="String"
+            }
+          }
+        KDL
       )
 
       Frai.configure do |config|
@@ -73,7 +61,7 @@ RSpec.describe "Frai YAML task loading" do
     end
   end
 
-  it "hydrates one task from its own YAML and keeps another task isolated" do
+  it "hydrates one task from its own KDL and keeps another task isolated" do
     code_review = CodeReviewTask._directive_declaration
     sum_numbers = SumNumbersTask._directive_declaration
     code_review_params = code_review&.params_declaration
@@ -103,7 +91,4 @@ RSpec.describe "Frai YAML task loading" do
     expect(sum_numbers_script_declarations).to be_empty
   end
 end
-
-
-
 

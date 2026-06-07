@@ -64,11 +64,6 @@ module Frai
         root      = Frai.configuration.project_root
         task_desc = read_directive_desc(root, task, :main)
 
-        params  = format_params(decl&.params_declaration)
-        mcps    = klass._mcps.map { |m|
-          s = Frai::MCP.find(m)
-          "#{m}#{s ? " (#{s.type}#{s.oauth_enabled ? '/oauth' : ''})" : ''}"
-        }.join(", ")
         puts "  # #{task_desc}" if task_desc
         puts "  #{task}"
         print_list("params", params_array(decl&.params_declaration))
@@ -82,7 +77,7 @@ module Frai
       end
 
       pipelines = ObjectSpace.each_object(Class)
-                             .select { |k| k < Frai::Pipeline && k.name && !k.name.start_with?("Base") }
+                             .select { |k| k < Frai::Pipeline && k.name && k.superclass != Frai::Pipeline }
                              .sort_by(&:name)
       unless pipelines.empty?
         puts "Pipelines:\n"
@@ -94,7 +89,7 @@ module Frai
       end
 
       agents = ObjectSpace.each_object(Class)
-                          .select { |k| k < Frai::Agent && k.name && !k.name.start_with?("Base") }
+                          .select { |k| k < Frai::Agent && k.name && k.superclass != Frai::Agent }
                           .sort_by(&:name)
       unless agents.empty?
         puts "Agents:\n"
@@ -129,7 +124,6 @@ module Frai
     desc "remove task TASK_NAME", "Remove a task and its Claude CLI command"
     def remove(type, task_name)
       abort "Error: unknown type '#{type}'. Use: task" unless type == "task"
-      load_project!
       Frai::Generators::TaskRemover.new(task_name).remove
     end
 
@@ -246,7 +240,7 @@ module Frai
 
     def task_classes
       ObjectSpace.each_object(Class)
-                 .select { |k| k < Frai::Task && k.name && !k.name.start_with?("Base") }
+                 .select { |k| k < Frai::Task && k.name && k.superclass != Frai::Task }
                  .sort_by(&:name)
     end
 
@@ -420,6 +414,16 @@ module Frai
     end
 
     def register_mcp(server)
+      if server.type == :http && server.url_value.to_s.strip.empty?
+        puts "  \e[33mskip\e[0m    #{server.name} — URL not set (check your .env)"
+        return
+      end
+
+      if server.type == :stdio && server.command_value.to_s.strip.empty?
+        puts "  \e[33mskip\e[0m    #{server.name} — command not set (check your .env)"
+        return
+      end
+
       cmd = if server.type == :http
         ["claude", "mcp", "add", "--scope", "local",
          "--transport", "http",

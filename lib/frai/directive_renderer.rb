@@ -5,30 +5,27 @@ require "erb"
 module Frai
   # Renders directive files (Markdown + ERB) into a final prompt string.
   #
-  # ERB helpers available inside directive templates:
+  # Helpers available inside directive templates:
   #
-  #   use(:name).with(:param).and_return(:result)
-  #     Renders a sub-directive. Extracts :result from sub-directive context and
-  #     sets it on parent. Returns "" (no text output).
-  #     Use <%= use(...) %> to output rendered text.
+  #   % run("script_name", params: :input_param, return: :result)
+  #   % run("script_name", params: [:param1, :param2], return: :result)
+  #   % use("sub_directive", params: :input_param, return: :result)
+  #   <%= use("sub_directive") %>
+  #   <%= use("sub_directive", params: :input_param) %>
   #
-  #   run(:name).with(:param).and_return(:result_key)
-  #     Runs a script. Extracts :result_key from JSON output, exposes as method.
-  #     Type is declared in task.rb — no need to repeat here.
-  #     Returns "" (no text output).
+  # % at line start — no closing tag needed (ERB shorthand).
+  # <%= %> for inline output.
   #
-  #   method_name
-  #     Access any input param, constant, or script/directive result as a plain method.
+  # Conditional logic:
   #
-  # @example sum.md.erb
-  #   <% run(:parse_numbers).with(:input_numbers).and_return(:parsed_numbers) %>
-  #   <% run(:sum_numbers).with(:parsed_numbers).and_return(:calculated_sum) %>
+  #   % if calculated_sum > max_issues
+  #     <%= use("high_value") %>
+  #   % end
   #
-  # @example main.md.erb
-  #   <% use(:sum).with(:input_numbers).and_return(:calculated_sum) %>
-  #   <% if calculated_sum > high_value_threshold %>
-  #     <%= use(:high_value).with(:calculated_sum) %>
-  #   <% end %>
+  # Variables (params, constants, script/directive results):
+  #
+  #   <%= task_id %>   <%= diff %>   <%= max_issues %>
+  #
   class DirectiveRenderer
     # Handles use(:name).with(:input).and_return(:ivar) chains.
     class DirectiveCall
@@ -146,7 +143,7 @@ module Frai
       path = find_directive!(:main)
       ctx  = build_context(input)
       inject_helpers(ctx)
-      render_file(path, ctx)
+      strip_desc_tags(render_file(path, ctx))
     end
 
     private
@@ -155,8 +152,12 @@ module Frai
       path    = find_directive!(name)
       sub_ctx = build_context(input.is_a?(Hash) ? input : { input: input })
       inject_helpers(sub_ctx)
-      text = render_file(path, sub_ctx)
+      text = strip_desc_tags(render_file(path, sub_ctx))
       SubDirectiveResult.new(text, sub_ctx)
+    end
+
+    def strip_desc_tags(text)
+      text.gsub(/<desc>.*?<\/desc>\n?/m, "").lstrip
     end
 
     def build_context(input)
@@ -184,17 +185,60 @@ module Frai
       renderer = self
       runner   = @script_runner
 
-      ctx.define_singleton_method(:use) do |name|
-        DirectiveRenderer::DirectiveCall.new(renderer, name, self)
+      ctx.define_singleton_method(:use) do |name, opts = nil|
+        call = DirectiveRenderer::DirectiveCall.new(renderer, name.to_sym, self)
+        case opts
+        when nil    then call
+        when Symbol then call.with(opts)
+        when Hash
+          if opts.key?(:params) || opts.key?(:return)
+            input = DirectiveRenderer.resolve_params(opts[:params], self)
+            call  = call.with(input) if input
+            opts[:return] ? call.and_return(opts[:return]) : call
+          else
+            input_spec, output_key = opts.first
+            input = input_spec.is_a?(Hash) \
+              ? input_spec.transform_values { |v| v.is_a?(Symbol) ? instance_variable_get(:"@#{v}") : v }
+              : input_spec
+            call.with(input).and_return(output_key)
+          end
+        end
       end
 
-      ctx.define_singleton_method(:run) do |name|
-        DirectiveRenderer::ScriptCall.new(runner, name, self)
+      ctx.define_singleton_method(:run) do |name, opts = nil|
+        call = DirectiveRenderer::ScriptCall.new(runner, name.to_sym, self)
+        case opts
+        when nil    then call
+        when Symbol then call.with(opts)
+        when Hash
+          if opts.key?(:params) || opts.key?(:return)
+            input = DirectiveRenderer.resolve_params(opts[:params], self)
+            call  = call.with(input) if input
+            opts[:return] ? call.and_return(opts[:return]) : call
+          else
+            input_spec, output_key = opts.first
+            input = input_spec.is_a?(Hash) \
+              ? input_spec.transform_values { |v| v.is_a?(Symbol) ? instance_variable_get(:"@#{v}") : v }
+              : input_spec
+            call.with(input).and_return(output_key)
+          end
+        end
+      end
+    end
+
+    def self.resolve_params(input_spec, ctx)
+      case input_spec
+      when Array
+        input_spec.each_with_object({}) { |k, h| h[k] = ctx.instance_variable_get(:"@#{k}") }
+      when Symbol, Hash, NilClass
+        input_spec
+      else
+        input_spec
       end
     end
 
     def render_file(path, ctx)
-      ERB.new(File.read(path), trim_mode: "-").result(ctx.instance_eval { binding })
+      ERB.new(File.read(path), trim_mode: "%-").result(ctx.instance_eval { binding })
     end
 
     def find_directive!(name)

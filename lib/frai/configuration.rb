@@ -77,6 +77,7 @@ module Frai
       %w[tasks pipelines agents].each do |dir|
         Dir[File.join(root, dir, "**", "*.rb")]
           .reject { |f| f.include?("/scripts/") }
+          .sort_by { |f| [f.count(File::SEPARATOR), f] }
           .each do |f|
             if File.read(f).match?(/^\s*(\$stdin|STDIN)\b/)
               raise Frai::Error,

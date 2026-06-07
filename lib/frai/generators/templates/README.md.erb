@@ -78,7 +78,7 @@ This creates:
 ```
 tasks/
   analyze_item/
-    task.yml
+    task.kdl
     task.rb
     directives/
       main.md.erb
@@ -94,67 +94,37 @@ end
 AnalyzeItemTask.call("some input")
 ```
 
-### With params, constants, and sub-directives
+### With params, constants, MCP and sub-directives
+
+`task.kdl` is the **contract** — params, constants, MCPs, sub-directives, and scripts are all declared here. The Ruby `task.rb` is a thin entrypoint that just provides `TaskNameTask.call`.
+
+```kdl
+task name="analyze_item" {
+  mcp "database"
+
+  const "max_length" 500
+
+  directive name="main" {
+    param name="name"     required=true  type="String"
+    param name="category" required=true  type="String"
+    param name="lang"     required=false type="String" default="en"
+
+    use name="context" {
+      run name="fetch_data" {
+        input   type="String"
+        returns name="data" type="String"
+      }
+    }
+  }
+}
+```
+
+The Ruby class stays minimal:
 
 ```ruby
 class AnalyzeItemTask < BaseTask
-  const :max_length, 500   # available in all directives as max_length
-
-  directive :main do
-    params do
-      required :name,     String   # Frai::MissingParam if absent
-      required :category, String   # Frai::InvalidParam if wrong type
-      optional :lang,     String, default: "en"
-    end
-
-    use :context do
-      run :fetch_data do
-        input   String
-        returns data: String
-      end
-    end
-  end
 end
 ```
-
-`task.yml` is the contract — params, constants, sub-directives, and scripts are all declared here. The Ruby `task.rb` file becomes a thin entrypoint.
-
-#### YAML equivalent
-
-The same structure can be described declaratively like this:
-
-```yaml
-name: code_review
-
-mcp:
-  - jira
-  - gitlab
-
-directives:
-  main:
-    params:
-      task_id:
-        required: true
-        type: String
-
-    use:
-      code_style_guides:
-        use:
-          naming_rules:
-          formatting_rules:
-
-    run:
-      analyze_diff:
-        params:
-          input_var:
-            required: true
-            type: Hash
-        returns:
-          diff_value:
-            type: String
-```
-
-This keeps `use` and `run` inside the directive that owns them, and lets nested directives appear directly under their own name.
 
 To run:
 
@@ -328,7 +298,7 @@ Invoke from Claude CLI **inside the project directory**:
 /analyze_item name(value) category(value)
 ```
 
-Where `name` and `category` are params declared in `task.yml`. Required params missing → error.
+Where `name` and `category` are params declared in `task.kdl`. Required params missing → error.
 
 Remove a task:
 

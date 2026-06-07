@@ -31,7 +31,7 @@ module Frai
 
       # All MCPs declared across all tasks
       declared = ObjectSpace.each_object(Class)
-                            .select { |k| k < Frai::Task && k.name }
+                            .select { |k| k < Frai::Task && k.name && k.superclass != Frai::Task }
                             .flat_map(&:_mcps)
                             .map(&:to_sym)
                             .uniq

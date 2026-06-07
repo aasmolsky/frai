@@ -118,69 +118,40 @@ AnalyzeItemTask.call("some input")
 
 ### With params, constants, MCP, sub-directives and scripts
 
+`task.kdl` is the **contract** — params, constants, MCPs, sub-directives, and scripts are all declared here. The Ruby `task.rb` is a thin entrypoint that just provides `TaskNameTask.call`.
+
+```kdl
+task name="code_review" {
+  mcp "jira"
+  mcp "gitlab"
+
+  const "max_issues" 10
+
+  directive name="main" {
+    param name="task_id"  required=true  type="String"
+    param name="language" required=false type="String" default="english"
+
+    use name="code_style_guides" {
+      use name="naming_rules"
+      use name="formatting_rules"
+    }
+
+    use name="context" {
+      run name="fetch_diff" {
+        input   type="String"
+        returns name="diff" type="String"
+      }
+    }
+  }
+}
+```
+
+The Ruby class stays minimal — all structure comes from `task.kdl`:
+
 ```ruby
-class AnalyzeItemTask < BaseTask
-  mcp :database   # declared MCP dependencies
-  mcp :search
-
-  const :max_issues, 10   # available in all directives
-
-  directive :main do
-    params do
-      required :query, String
-      optional :lang,  String, default: "en"
-    end
-
-    use :check_resources   # sub-directive
-
-    use :context do
-      run :fetch_diff do
-        input   String
-        returns diff: String
-      end
-    end
-  end
+class CodeReviewTask < BaseTask
 end
 ```
-
-`task.yml` is the **contract** — params, constants, MCPs, sub-directives, and scripts are all declared here. The Ruby `task.rb` file becomes a thin entrypoint.
-
-#### YAML equivalent
-
-The same structure can be described declaratively like this:
-
-```yaml
-name: code_review
-
-mcp:
-  - jira
-  - gitlab
-
-directives:
-  main:
-    params:
-      task_id:
-        required: true
-        type: String
-
-    use:
-      code_style_guides:
-        use:
-          naming_rules:
-          formatting_rules:
-
-    run:
-      analyze_diff:
-        params:
-          input_var:
-            required: true
-            type: Hash
-        returns:
-          diff_value:
-            type: String
-```
-
-This keeps `use` and `run` inside the directive that owns them, and lets nested directives appear directly under their own name.
 
 **MCP validation rules:**
 - Task declares `mcp :name` but `mcp/name.rb` is missing → error at startup
@@ -206,32 +177,37 @@ Analyze task <%= task_id %> in <%= lang %>.
 ### Scripts
 
 ```erb
-<% run(:fetch_diff).with(:task_id).and_return(:diff) %>
+% run "fetch_diff", :task_id => :diff
+
 <%= diff %>
 ```
-
-- `.with(:param)` — pass a value from current context by name
-- `.and_return(:key)` — extract `:key` from script JSON output and expose as method
-
-Script results are memoized — each script runs at most once per task execution.
 
 ### Sub-directives
 
 ```erb
-<% use(:context).with(:task_id).and_return(:diff) %>
-<%= use(:check_resources) %>
+% use "context", :task_id => :ctx_data
+
+<%= use "check_resources" %>
+```
+
+### Multiple inputs
+
+```erb
+% run "analyze", { diff: :diff, language: :language } => :result
+
+<%= result %>
 ```
 
 ### Conditional logic
 
 ```erb
-<% use(:sum).with(:input_numbers).and_return(:calculated_sum) %>
+% use "sum", :input_numbers => :calculated_sum
 
-<% if calculated_sum > max_issues %>
-  <%= use(:high_value).with(:calculated_sum) %>
-<% else %>
-  <%= use(:low_value).with(:calculated_sum) %>
-<% end %>
+% if calculated_sum > max_issues
+  <%= use "high_value" %>
+% else
+  <%= use "low_value" %>
+% end
 ```
 
 ### Mode-aware directives
@@ -325,14 +301,17 @@ Frai::MCP.define :portal do
 end
 ```
 
-**Step 2** — declare which MCPs each task needs in `task.yml`:
+**Step 2** — declare which MCPs each task needs in `task.kdl`:
 
-```ruby
-class AnalyzeTask < BaseTask
-  mcp :database
-  mcp :search
-  ...
-end
+```kdl
+task name="analyze" {
+  mcp "database"
+  mcp "search"
+
+  directive name="main" {
+    // ...
+  }
+}
 ```
 
 **Step 3** — register with Claude CLI:
@@ -374,7 +353,7 @@ Invoke from Claude CLI **inside the project directory**:
 /analyze_item query(some text) lang(en)
 ```
 
-Arguments use `name(value)` format — names match params declared in `task.yml`.
+Arguments use `name(value)` format — names match params declared in `task.kdl`.
 Also supports `key:value` format: `/analyze_item query:some-text`
 
 If the command fails, Claude reports the error and stops — it does not retry or guess parameters.
@@ -399,11 +378,102 @@ end
 
 ---
 
+## Applications
+
+An application is a **deterministic workflow** — a fixed chain of calls defined in YAML.
+The developer describes the steps upfront; the LLM is not involved in deciding what to call next.
+
+```bash
+frai new my_project   # generates applications/application.rb + application.yml
+```
+
+The contract lives in `applications/application.yml`:
+
+```yaml
+name: code_review_application
+kind: application
+
+params:
+  reviews:
+    required: true
+    type: String
+  language:
+    required: false
+    type: String
+    default: english
+
+steps:
+  - id: data
+    call: FetchDataTask
+    input: reviews
+
+  - id: response
+    call: RespondWithLanguage
+    input:
+      language: language
+      analyzed_data: data
+
+output: response
+```
+
+This is equivalent to:
+
+```ruby
+class CodeReviewApplication < BaseApplication
+  def call(reviews:, language: "english")
+    data     = FetchDataTask.call(reviews)
+    response = RespondWithLanguage.call(language: language, analyzed_data: data)
+    response
+  end
+end
+```
+
+The Ruby class stays thin — all structure comes from YAML:
+
+```ruby
+class CodeReviewApplication < BaseApplication
+end
+```
+
+You can change the internal flow later — swap a task, add a step, change the order — without touching the external call site:
+
+```ruby
+CodeReviewApplication.call(reviews: json_reviews, language: "english")
+```
+
+---
+
+## Application vs Agent
+
+| | Application | Agent |
+|---|---|---|
+| **Who decides what to call** | Developer (YAML) | LLM at runtime |
+| **Flow** | Fixed: step 1 → step 2 → output | Dynamic: branches, loops, retries |
+| **LLM in control loop** | No | Yes |
+| **Steps defined upfront** | Yes | No |
+| **Use when** | Predictable, repeatable workflows | Open-ended tasks requiring reasoning |
+
+### Application — deterministic chain
+- Steps are declared in YAML before execution
+- Order is fixed: step 1 → step 2 → output
+- LLM does not decide what to call next
+- Pure orchestration — fast and predictable
+
+### Agent — dynamic decision
+- LLM decides which tools/tasks to call and when
+- Can loop, branch, and call tools multiple times
+- Steps are not fixed — they emerge from LLM responses
+- LLM is in the control loop
+
+---
+
 ## Agents
 
 ```bash
 frai ga research_agent
 ```
+
+An agent is an **LLM-driven orchestrator** — it decides which tasks and tools to call based on intermediate results. Unlike an application, the flow is not fixed in advance.
 
 ```ruby
 class ResearchAgent < BaseAgent
