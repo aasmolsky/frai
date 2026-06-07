@@ -9,15 +9,15 @@ module Frai
   #
   # @example With model (API mode — RubyLLM calls the LLM):
   #   Frai.configure do |config|
-  #     config.model   = ENV["LLM_MODEL"]    # e.g. "claude-opus-4-6"
-  #     config.api_key = ENV["API_KEY"]
+  #     config.model   = ENV["LLM_MODEL"]      # e.g. "claude-opus-4-6"
+  #     config.api_key = ENV["LLM_API_KEY"]
   #   end
   class Configuration
     # LLM model name. If nil — prompt is returned as-is (CLI mode).
     # If set — RubyLLM calls the provider API with this model.
     attr_accessor :model
 
-    # API key for the LLM provider. Read from ENV["API_KEY"] by default.
+    # API key for the LLM provider. Read from ENV["LLM_API_KEY"] by default.
     attr_accessor :api_key
 
     # Environment: :development or :production (default).

@@ -265,8 +265,8 @@ ResearchAgent.call("topic to research")
 ```ruby
 # config/frai.rb
 Frai.configure do |config|
-  config.model   = ENV["LLM_MODEL"]   # e.g. "claude-opus-4-6", "gpt-4o"
-  config.api_key = ENV["API_KEY"]
+  config.model   = ENV["LLM_MODEL"]     # e.g. "claude-opus-4-6", "gpt-4o"
+  config.api_key = ENV["LLM_API_KEY"]
 end
 ```
 
