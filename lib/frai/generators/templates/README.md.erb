@@ -8,21 +8,31 @@ The heavy lifting — LLM calls, subprocess scripts, I/O — happens outside Rub
 
 ---
 
-## Installation
+## Setup
 
-Add to your Gemfile:
+`frai new` does not create a project `Gemfile`.
+Install Frai in the Ruby project that will run these files, or install it globally:
+
+```bash
+gem install frai
+```
+
+If your host application uses Bundler, add Frai there:
 
 ```ruby
 gem "frai"
 ```
 
-Then install:
+In that mode, run Frai commands through Bundler, for example:
 
 ```bash
-bundle install
+bundle exec frai c
+bundle exec frai e AnalyzeItemTask "input"
 ```
 
-You'll also need a gem for your LLM provider:
+`frai console` / `frai c` loads the current Frai project, so it only works from a directory that contains `config/frai.rb` and the Frai project structure.
+
+You may also need a provider gem in that host application, depending on the model you use:
 
 ```ruby
 gem "anthropic"    # for Claude

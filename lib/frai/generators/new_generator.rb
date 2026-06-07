@@ -52,7 +52,6 @@ module Frai
           "agents/base_agent.rb.erb"      => "agents/base_agent.rb",
           "config/frai.rb.erb"            => "config/frai.rb",
           "spec/conventions_spec.rb.erb"  => "spec/conventions_spec.rb",
-          "Gemfile.erb"                   => "Gemfile",
           "README.md.erb"                 => "README.md",
           ".env.erb"                      => ".env",
           ".env.example.erb"              => ".env.example",
@@ -83,7 +82,6 @@ module Frai
         puts ""
         puts "  Next steps:"
         puts "    cd #{@project_name}"
-        puts "    bundle install"
         puts "    frai console"
         puts ""
       end

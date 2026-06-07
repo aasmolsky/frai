@@ -33,7 +33,6 @@ bundle install
 ```bash
 frai new my_project
 cd my_project
-bundle install
 cp .env.example .env    # fill in your secrets
 frai setup              # register MCP servers with Claude CLI
 frai gt analyze_item    # generate your first task
