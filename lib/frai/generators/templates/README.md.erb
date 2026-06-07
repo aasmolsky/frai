@@ -78,6 +78,7 @@ This creates:
 ```
 tasks/
   analyze_item/
+    task.yml
     task.rb
     directives/
       main.md.erb
@@ -116,7 +117,44 @@ class AnalyzeItemTask < BaseTask
 end
 ```
 
-`task.rb` is the contract — params, constants, sub-directives, and scripts are all declared here. Types and structure live here; logic lives in the templates.
+`task.yml` is the contract — params, constants, sub-directives, and scripts are all declared here. The Ruby `task.rb` file becomes a thin entrypoint.
+
+#### YAML equivalent
+
+The same structure can be described declaratively like this:
+
+```yaml
+name: code_review
+
+mcp:
+  - jira
+  - gitlab
+
+directives:
+  main:
+    params:
+      task_id:
+        required: true
+        type: String
+
+    use:
+      code_style_guides:
+        use:
+          naming_rules:
+          formatting_rules:
+
+    run:
+      analyze_diff:
+        params:
+          input_var:
+            required: true
+            type: Hash
+        returns:
+          diff_value:
+            type: String
+```
+
+This keeps `use` and `run` inside the directive that owns them, and lets nested directives appear directly under their own name.
 
 To run:
 
@@ -290,7 +328,7 @@ Invoke from Claude CLI **inside the project directory**:
 /analyze_item name(value) category(value)
 ```
 
-Where `name` and `category` are params declared in `task.rb`. Required params missing → error.
+Where `name` and `category` are params declared in `task.yml`. Required params missing → error.
 
 Remove a task:
 

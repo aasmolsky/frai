@@ -143,7 +143,44 @@ class AnalyzeItemTask < BaseTask
 end
 ```
 
-`task.rb` is the **contract** — params, constants, MCPs, sub-directives, and scripts all declared here.
+`task.yml` is the **contract** — params, constants, MCPs, sub-directives, and scripts are all declared here. The Ruby `task.rb` file becomes a thin entrypoint.
+
+#### YAML equivalent
+
+The same structure can be described declaratively like this:
+
+```yaml
+name: code_review
+
+mcp:
+  - jira
+  - gitlab
+
+directives:
+  main:
+    params:
+      task_id:
+        required: true
+        type: String
+
+    use:
+      code_style_guides:
+        use:
+          naming_rules:
+          formatting_rules:
+
+    run:
+      analyze_diff:
+        params:
+          input_var:
+            required: true
+            type: Hash
+        returns:
+          diff_value:
+            type: String
+```
+
+This keeps `use` and `run` inside the directive that owns them, and lets nested directives appear directly under their own name.
 
 **MCP validation rules:**
 - Task declares `mcp :name` but `mcp/name.rb` is missing → error at startup
@@ -288,7 +325,7 @@ Frai::MCP.define :portal do
 end
 ```
 
-**Step 2** — declare which MCPs each task needs in `task.rb`:
+**Step 2** — declare which MCPs each task needs in `task.yml`:
 
 ```ruby
 class AnalyzeTask < BaseTask
@@ -337,7 +374,7 @@ Invoke from Claude CLI **inside the project directory**:
 /analyze_item query(some text) lang(en)
 ```
 
-Arguments use `name(value)` format — names match params declared in `task.rb`.
+Arguments use `name(value)` format — names match params declared in `task.yml`.
 Also supports `key:value` format: `/analyze_item query:some-text`
 
 If the command fails, Claude reports the error and stops — it does not retry or guess parameters.

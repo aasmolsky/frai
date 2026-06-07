@@ -24,9 +24,14 @@ RSpec.describe Frai::Task do
         end
       end
 
-      it "attempts to load RubyLlm adapter" do
-        # ruby_llm gem not installed in test env — expect LoadError wrapped as AdapterNotFound
-        expect { task.send(:adapter) }.to raise_error(Frai::Error)
+      if Gem::Specification.find_all_by_name("ruby_llm").any?
+        it "returns a RubyLlm adapter" do
+          expect(task.send(:adapter)).to be_a(Frai::Adapters::RubyLlm)
+        end
+      else
+        it "raises Frai::Error when ruby_llm is unavailable" do
+          expect { task.send(:adapter) }.to raise_error(Frai::Error)
+        end
       end
     end
   end
