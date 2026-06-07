@@ -98,7 +98,7 @@ Switch by setting `LLM_MODEL` in `.env`:
 ```bash
 # API mode
 LLM_MODEL=claude-opus-4-6
-API_KEY=your_api_key
+LLM_API_KEY=your_api_key
 ```
 
 ---
@@ -239,8 +239,8 @@ Scripts in `scripts/` are never autoloaded — they run as subprocesses. Results
 ```ruby
 # config/frai.rb
 Frai.configure do |config|
-  config.model   = ENV["LLM_MODEL"]   # nil = CLI mode, set = API mode
-  config.api_key = ENV["API_KEY"]     # for the configured LLM provider
+  config.model   = ENV["LLM_MODEL"]     # nil = CLI mode, set = API mode
+  config.api_key = ENV["LLM_API_KEY"]   # for the configured LLM provider
 end
 ```
 
@@ -253,7 +253,7 @@ end
 ```bash
 # .env — git-ignored
 LLM_MODEL=claude-opus-4-6   # comment out for CLI mode
-API_KEY=your_api_key
+LLM_API_KEY=your_api_key
 
 # MCP server credentials
 JIRA_MCP_URL=https://...
