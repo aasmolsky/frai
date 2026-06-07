@@ -32,6 +32,7 @@ module Frai
           tasks
           pipelines
           agents
+          applications
           scripts
           mcp
           config
@@ -47,7 +48,7 @@ module Frai
       def copy_templates
         templates = {
           "directives/base.md.erb.erb"    => "directives/base.md.erb",
-          "tasks/base_task.rb.erb"        => "tasks/base_task.rb",
+          "tasks/base_task.rb.erb"               => "tasks/base_task.rb",
           "pipelines/base_pipeline.rb.erb"=> "pipelines/base_pipeline.rb",
           "agents/base_agent.rb.erb"      => "agents/base_agent.rb",
           "config/frai.rb.erb"            => "config/frai.rb",

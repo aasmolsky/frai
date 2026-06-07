@@ -48,13 +48,14 @@ my_project/
     base_pipeline.rb
   agents/
     base_agent.rb
-  scripts/             # shared scripts
-  directives/          # shared prompt templates
-  mcp/                 # external MCP server definitions
+  applications/            # public entrypoints for external callers
+  scripts/                 # shared scripts
+  directives/              # shared prompt templates
+  mcp/                     # external MCP server definitions
   config/
-    frai.rb            # model, API key, autoload
-  .env                 # local secrets — git-ignored
-  .env.example         # template to commit
+    frai.rb                # model, API key, autoload
+  .env                     # local secrets — git-ignored
+  .env.example             # template to commit
   .gitignore
   spec/
     conventions_spec.rb
@@ -177,7 +178,7 @@ Analyze task <%= task_id %> in <%= lang %>.
 ### Scripts
 
 ```erb
-% run "fetch_diff", :task_id => :diff
+% run("fetch_diff", params: :task_id, return: :diff)
 
 <%= diff %>
 ```
@@ -185,15 +186,15 @@ Analyze task <%= task_id %> in <%= lang %>.
 ### Sub-directives
 
 ```erb
-% use "context", :task_id => :ctx_data
+% use("context", params: :task_id, return: :ctx_data)
 
-<%= use "check_resources" %>
+<%= use("check_resources") %>
 ```
 
 ### Multiple inputs
 
 ```erb
-% run "analyze", { diff: :diff, language: :language } => :result
+% run("analyze", params: [:diff, :language], return: :result)
 
 <%= result %>
 ```
@@ -201,12 +202,12 @@ Analyze task <%= task_id %> in <%= lang %>.
 ### Conditional logic
 
 ```erb
-% use "sum", :input_numbers => :calculated_sum
+% use("sum", params: :input_numbers, return: :calculated_sum)
 
 % if calculated_sum > max_issues
-  <%= use "high_value" %>
+  <%= use("high_value") %>
 % else
-  <%= use "low_value" %>
+  <%= use("low_value") %>
 % end
 ```
 
@@ -380,66 +381,50 @@ end
 
 ## Applications
 
-An application is a **deterministic workflow** — a fixed chain of calls defined in YAML.
-The developer describes the steps upfront; the LLM is not involved in deciding what to call next.
-
-```bash
-frai new my_project   # generates applications/application.rb + application.yml
-```
-
-The contract lives in `applications/application.yml`:
-
-```yaml
-name: code_review_application
-kind: application
-
-params:
-  reviews:
-    required: true
-    type: String
-  language:
-    required: false
-    type: String
-    default: english
-
-steps:
-  - id: data
-    call: FetchDataTask
-    input: reviews
-
-  - id: response
-    call: RespondWithLanguage
-    input:
-      language: language
-      analyzed_data: data
-
-output: response
-```
-
-This is equivalent to:
+An application is the **stable public entrypoint** for a Frai project. External callers — Rails, other services, scripts — always call `Application.call(...)`. The internal implementation can change freely without affecting the caller.
 
 ```ruby
-class CodeReviewApplication < BaseApplication
+# applications/application.rb
+class Application < Frai::Application
   def call(reviews:, language: "english")
     data     = FetchDataTask.call(reviews)
-    response = RespondWithLanguage.call(language: language, analyzed_data: data)
+    response = AnalyzeTask.call(language: language, data: data)
     response
   end
 end
+
+Application.call(reviews: [...], language: "english")
 ```
 
-The Ruby class stays thin — all structure comes from YAML:
+You can later add a step, swap a task, or change the flow — the external call site stays the same:
 
 ```ruby
-class CodeReviewApplication < BaseApplication
+# Before
+def call(reviews:, language: "english")
+  AnalyzeTask.call(reviews)
+end
+
+# After — caller doesn't need to change
+def call(reviews:, language: "english")
+  normalized = NormalizeTask.call(reviews)
+  analyzed   = AnalyzeTask.call(normalized)
+  TranslateTask.call(analyzed, language: language)
 end
 ```
 
-You can change the internal flow later — swap a task, add a step, change the order — without touching the external call site:
+### Calling from Rails
+
+Since it's plain Ruby, Rails can call the application class directly:
 
 ```ruby
-CodeReviewApplication.call(reviews: json_reviews, language: "english")
+# config/initializers/frai.rb
+require Rails.root.join("lib/my_frai_project/config/frai")
+
+# app/services/analysis_service.rb
+result = Application.call(reviews: reviews, language: "english")
 ```
+
+The frai project lives in `lib/` and is loaded via the initializer. All classes — `Application`, tasks, pipelines — become available as regular Ruby constants.
 
 ---
 
@@ -447,22 +432,20 @@ CodeReviewApplication.call(reviews: json_reviews, language: "english")
 
 | | Application | Agent |
 |---|---|---|
-| **Who decides what to call** | Developer (YAML) | LLM at runtime |
+| **Who decides what to call** | Developer (Ruby) | LLM at runtime |
 | **Flow** | Fixed: step 1 → step 2 → output | Dynamic: branches, loops, retries |
 | **LLM in control loop** | No | Yes |
 | **Steps defined upfront** | Yes | No |
 | **Use when** | Predictable, repeatable workflows | Open-ended tasks requiring reasoning |
 
 ### Application — deterministic chain
-- Steps are declared in YAML before execution
-- Order is fixed: step 1 → step 2 → output
+- Steps are plain Ruby — you decide the order
 - LLM does not decide what to call next
-- Pure orchestration — fast and predictable
+- Fast, predictable, easy to test
 
 ### Agent — dynamic decision
 - LLM decides which tools/tasks to call and when
 - Can loop, branch, and call tools multiple times
-- Steps are not fixed — they emerge from LLM responses
 - LLM is in the control loop
 
 ---

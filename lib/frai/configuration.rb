@@ -74,7 +74,7 @@ module Frai
     #
     # @param root [String] project root directory
     def autoload!(root)
-      %w[tasks pipelines agents].each do |dir|
+      %w[tasks pipelines agents applications].each do |dir|
         Dir[File.join(root, dir, "**", "*.rb")]
           .reject { |f| f.include?("/scripts/") }
           .sort_by { |f| [f.count(File::SEPARATOR), f] }
