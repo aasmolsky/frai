@@ -14,8 +14,8 @@ Requires Ruby >= 3.3.0.
 cd <%= @project_name %>
 bundle install
 cp .env.example .env    # fill in your secrets
-bundle exec frai setup              # register MCP servers with Claude CLI
-bundle exec frai gt analyze_item    # generate your first task
+frai setup              # register MCP servers with Claude CLI
+frai gt analyze_item    # generate your first task
 ```
 
 **Generated structure:**
@@ -52,12 +52,12 @@ bundle exec frai gt analyze_item    # generate your first task
 
 **Key: Task naming convention**
 
-When you run `bundle exec frai gt analyze_item`:
+When you run `frai gt analyze_item`:
 - Creates folder: `tasks/analyze_item/`
 - Creates file: `tasks/analyze_item/task.rb`
 - Inside `task.rb` is a namespace: `module AnalyzeItem; class Task < BaseTask; end; end`
 - **Invoke as**: `AnalyzeItem::Task.call(input)`
-- Or CLI: `bundle exec frai exec AnalyzeItem::Task "input"`
+- Or CLI: `frai exec AnalyzeItem::Task "input"`
 
 ---
 
@@ -75,8 +75,8 @@ Default is `production`. In `development` and `test`, all MCP servers are skippe
 
 Override inline for a single run:
 ```bash
-FRAI_ENV=production bundle exec frai exec AnalyzeItem::Task "query(test)"
-FRAI_ENV=development bundle exec frai exec AnalyzeItem::Task "query(test)"
+FRAI_ENV=production frai exec AnalyzeItem::Task "query(test)"
+FRAI_ENV=development frai exec AnalyzeItem::Task "query(test)"
 ```
 
 ---
@@ -96,14 +96,14 @@ Frai supports two fundamental modes — **CLI mode** and **API mode**. They cont
 ```
 
 **How it works:**
-- `bundle exec frai exec` renders the prompt and **returns it as plain text**
+- `frai exec` renders the prompt and **returns it as plain text**
 - Claude.app reads the text and acts as the LLM
 - No API calls are made by frai itself
 - Useful for development, one-off requests, or users in Claude.app
 
 **Example:**
 ```bash
-bundle exec frai exec CodeReview::Task "task_id(PDB-123)"
+frai exec CodeReview::Task "task_id(PDB-123)"
 # Output: the rendered prompt (no API call)
 # You paste this into Claude.app for analysis
 ```
@@ -119,14 +119,14 @@ LLM_API_KEY=sk-ant-...
 ```
 
 **How it works:**
-- `bundle exec frai exec` renders the prompt **and sends it to the LLM API via RubyLLM**
+- `frai exec` renders the prompt **and sends it to the LLM API via RubyLLM**
 - Returns the LLM response directly
 - Works in background jobs, cron, automation without user intervention
 - Requires API credentials
 
 **Example:**
 ```bash
-FRAI_ENV=production bundle exec frai exec CodeReview::Task "task_id(PDB-123)"
+FRAI_ENV=production frai exec CodeReview::Task "task_id(PDB-123)"
 # Output: Claude's response (API call made internally)
 ```
 
@@ -242,7 +242,7 @@ end
 
 ### Task file structure and organization
 
-When you run `bundle exec frai gt code_review`, the generator creates:
+When you run `frai gt code_review`, the generator creates:
 
 ```
 tasks/
@@ -464,7 +464,7 @@ end
 **Step 3** — register with Claude CLI:
 
 ```bash
-bundle exec frai setup
+frai setup
 ```
 
 ### OAuth HTTP MCP servers
@@ -474,21 +474,21 @@ When `oauth true` is set, frai manages tokens automatically:
 - **First run**: browser opens for authentication. Token saved to `.frai_oauth_cache.json` (git-ignored).
 - **Subsequent runs**: cached token used directly. Silent refresh attempted if expired.
 - **Token expired (refresh fails)**: browser opens again.
-- **For cron jobs**: authenticate once manually (`bundle exec frai exec`), then cron uses the cached token.
+- **For cron jobs**: authenticate once manually (`frai exec`), then cron uses the cached token.
 - **Token cache expired**: if both access and refresh tokens are no longer valid, delete the cache file and re-authenticate:
   ```bash
   rm .frai_oauth_cache.json
-  bundle exec frai exec TaskName "param(value)"   # browser opens once
+  frai exec TaskName "param(value)"   # browser opens once
   ```
 
 ---
 
 ## Claude CLI integration
 
-Each task gets its own slash command — created automatically by `bundle exec frai gt`:
+Each task gets its own slash command — created automatically by `frai gt`:
 
 ```bash
-bundle exec frai gt analyze_item
+frai gt analyze_item
 # → creates task files
 # → creates .claude/commands/analyze_item.md
 ```
@@ -510,7 +510,7 @@ If the command fails, Claude reports the error and stops — it does not retry o
 ## Pipelines
 
 ```bash
-bundle exec frai gp review_pipeline
+frai gp review_pipeline
 ```
 
 ```ruby
@@ -599,7 +599,7 @@ The frai project lives in `lib/` and is loaded via the initializer. All classes 
 ## Agents
 
 ```bash
-bundle exec frai ga research_agent
+frai ga research_agent
 ```
 
 An agent is an **LLM-driven orchestrator** — it decides which tasks and tools to call based on intermediate results. Unlike an application, the flow is not fixed in advance.
@@ -619,7 +619,7 @@ end
 ## Removing a task
 
 ```bash
-bundle exec frai rt analyze_item   # short for: frai remove task
+frai rt analyze_item   # short for: frai remove task
 ```
 
 Removes the task directory and `.claude/commands/analyze_item.md`.
@@ -630,7 +630,7 @@ Before deleting the project directory, clean up external artifacts:
 
 ```bash
 cd <%= @project_name %>
-bundle exec frai destroy
+frai destroy
 cd ..
 rm -rf <%= @project_name %>
 ```
@@ -639,7 +639,7 @@ rm -rf <%= @project_name %>
 
 ## Project discovery
 
-`bundle exec frai list` (alias: `frai l`) shows everything in the project at a glance:
+`frai list` (alias: `frai l`) shows everything in the project at a glance:
 
 ```
 Tasks:
@@ -716,7 +716,7 @@ end
 Write task output and errors to a log file — useful for cron jobs and automation:
 
 ```bash
-bundle exec frai exec AnalyzeItem::Task "query(some text)" --log logs/analyze.log
+frai exec AnalyzeItem::Task "query(some text)" --log logs/analyze.log
 ```
 
 Directories are created automatically if they don't exist. Each entry includes a timestamp and status:
@@ -880,16 +880,16 @@ Scripts can be written in any language (Ruby, Python, bash) — the spec only ca
 
 | Command | Description |
 |---|---|
-| `bundle exec frai generate task NAME` | Generate a task + Claude CLI command (`frai gt`) |
-| `bundle exec frai generate pipeline NAME` | Generate a pipeline (`frai gp`) |
-| `bundle exec frai generate agent NAME` | Generate an agent (`frai ga`) |
-| `bundle exec frai remove task NAME` | Remove a task and its Claude CLI command (`frai rt`) |
-| `bundle exec frai setup` | Register `mcp/*.rb` servers with Claude CLI (`frai s`) |
-| `bundle exec frai destroy` | Clean up MCP servers and commands before deleting the project |
-| `bundle exec frai list` | List all tasks, MCPs, pipelines, agents and shared directives (`frai l`) |
-| `bundle exec frai exec CLASS_NAME [INPUT]` | Execute a task, pipeline, or agent (`frai e`) |
-| `bundle exec frai exec ... --log PATH` | Execute and write output/errors to log file |
-| `bundle exec frai console` | Interactive Ruby console with project loaded (`frai c`) |
+| `frai generate task NAME` | Generate a task + Claude CLI command (`frai gt`) |
+| `frai generate pipeline NAME` | Generate a pipeline (`frai gp`) |
+| `frai generate agent NAME` | Generate an agent (`frai ga`) |
+| `frai remove task NAME` | Remove a task and its Claude CLI command (`frai rt`) |
+| `frai setup` | Register `mcp/*.rb` servers with Claude CLI (`frai s`) |
+| `frai destroy` | Clean up MCP servers and commands before deleting the project |
+| `frai list` | List all tasks, MCPs, pipelines, agents and shared directives (`frai l`) |
+| `frai exec CLASS_NAME [INPUT]` | Execute a task, pipeline, or agent (`frai e`) |
+| `frai exec ... --log PATH` | Execute and write output/errors to log file |
+| `frai console` | Interactive Ruby console with project loaded (`frai c`) |
 
 ---
 

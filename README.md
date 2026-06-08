@@ -41,20 +41,20 @@ Then require the project in your Rails config:
 require_relative "../../path/to/my_project/config/frai"
 ```
 
-**Option 2: Via Gemfile (if project uses Bundler)**
+**Option 2: Via Gemfile of a host project (Rails, etc.)**
+
+If frai runs inside an existing Ruby/Rails project that uses Bundler, add it to that project's Gemfile:
 ```ruby
-# Gemfile
+# Gemfile of the Rails/host project
 gem "frai"
 ```
-Then run frai commands through bundler inside the frai project directory:
 ```bash
-cd my_project
 bundle install
-bundle exec frai c          # console
-bundle exec frai e TaskName # exec
+bundle exec frai c          # console — only needed in bundler context
+bundle exec frai e TaskName # exec  — only needed in bundler context
 ```
 
-**Key point:** Frai projects are self-contained with their own `bundle` context. They do not require any gems to be added to your host project's Gemfile except `frai` itself.
+**Key point:** A standalone frai project (created with `frai new`) does **not** have `gem "frai"` in its Gemfile — frai must already be installed globally. The generated Gemfile only contains `rspec`.
 
 ---
 
