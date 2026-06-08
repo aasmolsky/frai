@@ -63,15 +63,18 @@ bundle exec frai e TaskName # exec  — only needed in bundler context
 ```bash
 frai new my_project
 cd my_project
-cp .env.example .env    # fill in your secrets
-frai setup              # register MCP servers with Claude CLI
-frai gt analyze_item    # generate your first task
+bundle install              # installs rspec
+cp .env.example .env        # fill in your secrets
+frai setup                  # register MCP servers with Claude CLI
+frai gt analyze_item        # generate your first task
 ```
 
 **Generated structure:**
 
 ```
 my_project/
+  Gemfile                # rspec
+  .rspec
   tasks/
     base_task.rb
     analyze_item/                           # new task created
@@ -86,6 +89,7 @@ my_project/
   applications/            # public entrypoints for external callers
   scripts/                 # shared scripts
   directives/              # shared prompt templates
+    base.md.erb
   mcp/                     # external MCP server definitions
   config/
     frai.rb                # model, API key, autoload
@@ -93,6 +97,7 @@ my_project/
   .env.example             # template to commit
   .gitignore
   spec/
+    spec_helper.rb
     conventions_spec.rb
 ```
 
@@ -245,14 +250,14 @@ end
 **In the directive:**
 
 ```erb
-<% run(:fetch_diff).with(:task_id).and_return(:diff) %>
+% run(:fetch_diff, params: :task_id, return: :diff)
 
 Review this code:
 <%= diff %>
 ```
 
-- `.with(:task_id)` — pass the `task_id` param to the script
-- `.and_return(:diff)` — extract the `diff` field from script's JSON output
+- `params: :task_id` — передать параметр `task_id` в скрипт
+- `return: :diff` — извлечь поле `diff` из JSON-ответа скрипта
 
 ### Full example
 
@@ -368,7 +373,7 @@ Use these guidelines:
 **Run a script** — capture result into a variable:
 
 ```erb
-<% run(:fetch_diff).with(:task_id).and_return(:diff) %>
+% run(:fetch_diff, params: :task_id, return: :diff)
 
 Code changes:
 <%= diff %>
@@ -377,13 +382,13 @@ Code changes:
 **Use a sub-directive** — inline rendering:
 
 ```erb
-<%= use(:summary).with(:analysis_result) %>
+<%= use(:summary, params: :analysis_result) %>
 ```
 
 **Use a sub-directive** — capture into variable:
 
 ```erb
-<% use(:security_check).with(:diff).and_return(:security_issues) %>
+% use(:security_check, params: :diff, return: :security_issues)
 
 Security findings:
 <%= security_issues %>
@@ -392,23 +397,23 @@ Security findings:
 **Conditional logic**:
 
 ```erb
-<% use(:analyze_diff).with(:diff).and_return(:result) %>
+% use(:analyze_diff, params: :diff, return: :result)
 
-<% if result.include?("critical") %>
+% if result.include?("critical")
   ALERT: Critical issues found!
-  <%= use(:escalate_summary).with(:result) %>
-<% else %>
+  <%= use(:escalate_summary, params: :result) %>
+% else
   Code is OK
-<% end %>
+% end
 ```
 
 ### Key points
 
 | Concept | Syntax | Returns |
 |---------|--------|---------|
-| **Run script** | `run(:name).with(:param).and_return(:var)` | "" (no text output) |
-| **Inline sub-directive** | `<%= use(:name).with(:param) %>` | rendered text |
-| **Capture sub-directive** | `use(:name).with(:param).and_return(:var)` | "" (text in @var) |
+| **Run script** | `% run(:name, params: :param, return: :var)` | "" (no text output) |
+| **Inline sub-directive** | `<%= use(:name, params: :param) %>` | rendered text |
+| **Capture sub-directive** | `% use(:name, params: :param, return: :var)` | "" (text in @var) |
 | **Access variable** | `<%= var_name %>` | the value |
 | **Params / constants / results** | `<%= param %>` | available as methods |
 
@@ -784,9 +789,9 @@ Frai projects include a `spec/` folder with a conventions spec out of the box. Y
 
 ### Setup
 
-No changes to your host project required. `rspec` ships as a development dependency of the frai gem itself — it is always available through frai's bundle regardless of what the host project uses (Rails, another framework, or even Python).
+Generated projects include `rspec` in their own `Gemfile` and a pre-generated `spec/spec_helper.rb`. No extra configuration needed — just run `bundle exec rspec` from the project root.
 
-Create `spec/spec_helper.rb` inside your Frai project:
+`spec/spec_helper.rb` is pre-generated:
 
 ```ruby
 # spec/spec_helper.rb
@@ -803,23 +808,20 @@ end
 
 ### Running specs
 
-Specs run via frai's own bundle — the host project is not involved:
-
 ```bash
-cd /path/to/frai
-bundle exec rspec /path/to/my_project/spec/
+bundle exec rspec
 ```
 
 Run a single file:
 
 ```bash
-bundle exec rspec /path/to/my_project/spec/tasks/code_review_spec.rb
+bundle exec rspec spec/tasks/code_review_spec.rb
 ```
 
 Run a single example by line number:
 
 ```bash
-bundle exec rspec /path/to/my_project/spec/tasks/code_review_spec.rb:12
+bundle exec rspec spec/tasks/code_review_spec.rb:12
 ```
 
 ### Testing a task
@@ -831,10 +833,9 @@ require "spec_helper"
 
 RSpec.describe CodeReview::Task do
   it "renders the prompt with given params", :aggregate_failures do
-    result = described_class.call(task_id: "PDB-123", language: "english")
+    result = described_class.call(task_id: "PDB-123")
 
     expect(result).to include("PDB-123")
-    expect(result).to include("english")
   end
 
   it "raises on missing required param" do
