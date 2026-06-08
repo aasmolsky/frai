@@ -26,6 +26,36 @@ gem "frai"
 bundle install
 ```
 
+### Using frai in a Rails or host project
+
+If you're integrating frai into an existing Ruby project (Rails, Sinatra, etc.):
+
+**Option 1: Global installation** (recommended)
+```bash
+gem install frai
+frai new my_project
+```
+Then require the project in your Rails config:
+```ruby
+# config/initializers/frai.rb
+require_relative "../../path/to/my_project/config/frai"
+```
+
+**Option 2: Via Gemfile (if project uses Bundler)**
+```ruby
+# Gemfile
+gem "frai"
+```
+Then run frai commands through bundler inside the frai project directory:
+```bash
+cd my_project
+bundle install
+bundle exec frai c          # console
+bundle exec frai e TaskName # exec
+```
+
+**Key point:** Frai projects are self-contained with their own `bundle` context. They do not require any gems to be added to your host project's Gemfile except `frai` itself.
+
 ---
 
 ## Getting started
@@ -38,12 +68,17 @@ frai setup              # register MCP servers with Claude CLI
 frai gt analyze_item    # generate your first task
 ```
 
-Generated structure:
+**Generated structure:**
 
 ```
 my_project/
   tasks/
     base_task.rb
+    analyze_item/                           # new task created
+      task.rb                               # namespace + schema
+      directives/
+        main.md.erb                         # entry point
+      scripts/
   pipelines/
     base_pipeline.rb
   agents/
@@ -60,6 +95,15 @@ my_project/
   spec/
     conventions_spec.rb
 ```
+
+**Key: Task naming convention**
+
+When you run `frai gt analyze_item`:
+- Creates folder: `tasks/analyze_item/`
+- Creates file: `tasks/analyze_item/task.rb` 
+- Inside `task.rb` is a namespace: `module AnalyzeItem; class Task < BaseTask; end; end`
+- **Invoke as**: `AnalyzeItem::Task.call(input)`
+- Or CLI: `frai exec AnalyzeItem::Task "input"`
 
 ---
 
@@ -85,21 +129,65 @@ FRAI_ENV=development frai exec AnalyzeItem::Task "query(test)"
 
 ## Two modes of operation
 
-**CLI mode** (`LLM_MODEL` not set in `.env`):
-- `frai exec` renders the prompt and returns it as text
-- Claude CLI reads it and acts as the LLM
-- No API key required
+Frai supports two fundamental modes — **CLI mode** and **API mode**. They control how the LLM is invoked.
 
-**API mode** (`LLM_MODEL` is set):
-- `frai exec` renders the prompt, sends it to the LLM via RubyLLM, returns the response
-- Works for cron jobs, pipelines, automation — no Claude CLI needed
+### CLI mode (for development, prototyping, Claude.app users)
 
-Switch by setting `LLM_MODEL` in `.env`:
+**Setup:** Leave `LLM_MODEL` unset in `.env`
 
 ```bash
-# API mode
+# .env
+# LLM_MODEL=...     (commented out)
+# LLM_API_KEY=...   (not needed)
+```
+
+**How it works:**
+- `frai exec` renders the prompt and **returns it as plain text**
+- Claude.app reads the text and acts as the LLM
+- No API calls are made by frai itself
+- Useful for development, one-off requests, or users in Claude.app
+
+**Example:**
+```bash
+frai exec CodeReview::Task "task_id(PDB-123)"
+# Output: the rendered prompt (no API call)
+# You paste this into Claude.app for analysis
+```
+
+### API mode (for production, cron jobs, automation)
+
+**Setup:** Set `LLM_MODEL` and `LLM_API_KEY` in `.env`
+
+```bash
+# .env
 LLM_MODEL=claude-opus-4-6
-LLM_API_KEY=your_api_key
+LLM_API_KEY=sk-ant-...
+```
+
+**How it works:**
+- `frai exec` renders the prompt **and sends it to the LLM API via RubyLLM**
+- Returns the LLM response directly
+- Works in background jobs, cron, automation without user intervention
+- Requires API credentials
+
+**Example:**
+```bash
+FRAI_ENV=production frai exec CodeReview::Task "task_id(PDB-123)"
+# Output: Claude's response (API call made internally)
+```
+
+### Development vs Production environments
+
+| Env | LLM Calls | MCPs | Use Case |
+|-----|-----------|------|----------|
+| **development** | skipped | skipped | See prompts without API calls, test locally |
+| **test** | skipped | skipped | Run specs, validate task structure |
+| **production** | called | connected | Real API calls, connected MCP servers |
+
+**Check which mode you're in:**
+```ruby
+Frai.configuration.env         # → :development, :test, or :production
+Frai.configuration.model       # → nil (CLI mode) or "claude-opus-4-6" (API mode)
 ```
 
 ---
@@ -133,6 +221,39 @@ All task declarations live inside `schema do ... end`:
 | `use :name` | Include a sub-directive (`directives/name.md.erb`) |
 | `run :name do ... end` | Declare a script (`scripts/name.rb`) with input/returns |
 
+### Understanding `run` blocks (scripts)
+
+Scripts are the mechanism for gathering external data. Each `run` block declares a script that will run as a subprocess and capture its result.
+
+**Structure:**
+
+```ruby
+run :fetch_diff do
+  input type: String              # What type of data the script receives
+  returns :diff, type: String     # What field to capture from script output
+end
+```
+
+**How it executes:**
+
+1. Task receives input (e.g., `task_id: "PDB-123"`)
+2. Script runs, receives `{ input: task_id }` as JSON on stdin
+3. Script returns JSON like `{ "diff": "... code diff ..." }`
+4. Frai captures the `:diff` field and exposes it in the directive as `diff` method
+5. Template can use `<%= diff %>`
+
+**In the directive:**
+
+```erb
+<% run(:fetch_diff).with(:task_id).and_return(:diff) %>
+
+Review this code:
+<%= diff %>
+```
+
+- `.with(:task_id)` — pass the `task_id` param to the script
+- `.and_return(:diff)` — extract the `diff` field from script's JSON output
+
 ### Full example
 
 `task.rb` is the **contract** — params, constants, MCPs, sub-directives, and scripts are all declared in `schema do ... end`.
@@ -164,6 +285,29 @@ module CodeReview
   end
 end
 ```
+
+### Task file structure and organization
+
+When you run `frai gt code_review`, the generator creates:
+
+```
+tasks/
+  code_review/                    # task name in snake_case
+    task.rb                       # task contract (namespace + schema)
+    directives/
+      main.md.erb                 # entry point for LLM
+      code_style_guides.md.erb    # sub-directive (referenced in main)
+    scripts/
+      analyze_diff.rb             # script (returns JSON to stdout)
+      fetch_context.py            # can be any language
+```
+
+**Key points:**
+- Each task lives in its own folder under `tasks/`
+- `task.rb` contains the **namespace wrapper** and **schema declaration** — the contract
+- Task name is derived from folder name: `code_review/` → `CodeReview::Task`
+- Invoke as: `CodeReview::Task.call(task_id: "PDB-123")`
+- All directives and scripts are discovered automatically by name
 
 ### Skipping the LLM call
 
@@ -203,68 +347,72 @@ The Ruby class stays minimal — all structure comes from `schema do ... end` in
 
 ## Directives
 
-Directives are Markdown + ERB prompt templates. `main.md.erb` is always the entry point.
+Directives are Markdown + ERB prompt templates. `main.md.erb` is always the entry point for the LLM call.
 
-### Variables
+**Example:** `tasks/code_review/directives/main.md.erb`
 
-Params, constants, and script results are available as plain methods:
+### Available helpers in directives
 
-```ruby
-module Analyze
-  class Task < BaseTask
-    schema do
-      mcp :database
-      mcp :search
+**Variables** — access params, constants, and script results as plain methods:
 
-      # ...
-    end
-  end
-end
+```erb
+You are a code reviewer.
+Review this code:
+
+<%= diff %>
+
+Use these guidelines:
+<%= guidelines %>
 ```
 
+**Run a script** — capture result into a variable:
+
+```erb
+<% run(:fetch_diff).with(:task_id).and_return(:diff) %>
+
+Code changes:
 <%= diff %>
 ```
 
-### Sub-directives
+**Use a sub-directive** — inline rendering:
 
 ```erb
-% use("context", params: :task_id, return: :ctx_data)
-
-<%= use("check_resources") %>
+<%= use(:summary).with(:analysis_result) %>
 ```
 
-### Multiple inputs
+**Use a sub-directive** — capture into variable:
 
 ```erb
-% run("analyze", params: [:diff, :language], return: :result)
+<% use(:security_check).with(:diff).and_return(:security_issues) %>
 
-<%= result %>
+Security findings:
+<%= security_issues %>
 ```
 
-### Conditional logic
+**Conditional logic**:
 
 ```erb
-% use("sum", params: :input_numbers, return: :calculated_sum)
+<% use(:analyze_diff).with(:diff).and_return(:result) %>
 
-% if calculated_sum > max_issues
-  <%= use("high_value") %>
-% else
-  <%= use("low_value") %>
-% end
-```
-
-### Mode-aware directives
-
-Use `Frai.configuration.model` to adapt content to CLI vs API mode:
-
-```erb
-<% if Frai.configuration.model %>
-<%# API mode: MCP tools already verified — proceed directly %>
+<% if result.include?("critical") %>
+  ALERT: Critical issues found!
+  <%= use(:escalate_summary).with(:result) %>
 <% else %>
-<%# CLI mode: ask Claude to verify MCP access %>
-Before starting, verify that required MCP tools are accessible.
+  Code is OK
 <% end %>
 ```
+
+### Key points
+
+| Concept | Syntax | Returns |
+|---------|--------|---------|
+| **Run script** | `run(:name).with(:param).and_return(:var)` | "" (no text output) |
+| **Inline sub-directive** | `<%= use(:name).with(:param) %>` | rendered text |
+| **Capture sub-directive** | `use(:name).with(:param).and_return(:var)` | "" (text in @var) |
+| **Access variable** | `<%= var_name %>` | the value |
+| **Params / constants / results** | `<%= param %>` | available as methods |
+
+Type is declared in `task.rb` schema — not needed in templates.
 
 ---
 
