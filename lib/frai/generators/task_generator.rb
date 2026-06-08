@@ -37,7 +37,6 @@ module Frai
 
       def copy_templates
         {
-          "task.kdl.erb"               => "task.kdl",
           "task.rb.erb"                => "task.rb",
           "directives/main.md.erb.erb" => "directives/main.md.erb"
         }.each do |template, target|

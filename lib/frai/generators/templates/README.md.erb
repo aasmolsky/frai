@@ -79,7 +79,6 @@ This creates:
 ```
 tasks/
   analyze_item/
-    task.kdl
     task.rb
     directives/
       main.md.erb
@@ -97,33 +96,28 @@ AnalyzeItemTask.call("some input")
 
 ### With params, constants, MCP and sub-directives
 
-`task.kdl` is the **contract** — params, constants, MCPs, sub-directives, and scripts are all declared here. The Ruby `task.rb` is a thin entrypoint that just provides `TaskNameTask.call`.
-
-```kdl
-task name="analyze_item" {
-  mcp "database"
-
-  const "max_length" 500
-
-  directive name="main" {
-    param name="name"     required=true  type="String"
-    param name="category" required=true  type="String"
-    param name="lang"     required=false type="String" default="en"
-
-    use name="context" {
-      run name="fetch_data" {
-        input   type="String"
-        returns name="data" type="String"
-      }
-    }
-  }
-}
-```
-
-The Ruby class stays minimal:
+The whole contract lives in the Ruby file as `schema do ... end`.
 
 ```ruby
 class AnalyzeItemTask < BaseTask
+  schema do
+    mcp :database
+
+    const :max_length, 500
+
+    param :name,     type: String, required: true
+    param :category, type: String, required: true
+    param :lang,     type: String, default: "en"
+
+    use :context do
+      run :fetch_data do
+        input   String
+        returns do
+          data String
+        end
+      end
+    end
+  end
 end
 ```
 
@@ -150,12 +144,10 @@ Directives are Markdown + ERB prompt templates. `main.md.erb` is always the entr
 Params, constants, and script results are available as plain methods:
 
 ```erb
-<%%= # tasks/analyze_item/directives/main.md.erb %>
-
 You are an expert analyst.
-Analyze this <%%= category %>: <%%= name %>
-Respond in <%%= lang %>
-Max length: <%%= max_length %> characters.
+Analyze this <%= category %>: <%= name %>
+Respond in <%= lang %>
+Max length: <%= max_length %> characters.
 ```
 
 ### Scripts
@@ -302,7 +294,7 @@ Invoke from Claude CLI **inside the project directory**:
 /analyze_item name(value) category(value)
 ```
 
-Where `name` and `category` are params declared in `task.kdl`. Required params missing → error.
+Where `name` and `category` are params declared in `schema`. Required params missing → error.
 
 Remove a task:
 
@@ -310,42 +302,3 @@ Remove a task:
 frai rt analyze_item   # short for: frai remove task
 ```
 
----
-
-## Applications
-
-An application is the **stable public entrypoint** for this project. External callers — Rails, other services, scripts — always call `Application.call(...)`. The internal implementation can change freely without affecting the caller.
-
-```ruby
-# applications/application.rb
-class Application < Frai::Application
-  def call(input)
-    AnalyzeItemTask.call(input)
-  end
-end
-
-Application.call("your input")
-```
-
-You can later add steps, swap tasks, or change the flow — the external call site stays the same.
-
----
-
-## CLI reference
-
-| Command | Description |
-|---|---|
-| `frai new PROJECT_NAME` | Create a new project (`frai n`) |
-| `frai generate task NAME` | Generate a task + Claude CLI command (`frai gt`) |
-| `frai generate pipeline NAME` | Generate a pipeline (`frai gp`) |
-| `frai generate agent NAME` | Generate an agent (`frai ga`) |
-| `frai remove task NAME` | Remove a task and its Claude CLI command (`frai rt`) |
-| `frai setup` | Register `mcp/*.rb` servers with Claude CLI (`frai s`) |
-| `frai exec CLASS_NAME [INPUT]` | Execute a task, pipeline, or agent (`frai e`) |
-| `frai console` | Interactive Ruby console with project loaded (`frai c`) |
-
----
-
-## License
-
-MIT

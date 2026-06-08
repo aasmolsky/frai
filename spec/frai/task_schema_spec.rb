@@ -4,10 +4,7 @@ require_relative "../spec_helper"
 require "tmpdir"
 require "fileutils"
 
-class CodeReviewTask < Frai::Task; end
-class SumNumbersTask < Frai::Task; end
-
-RSpec.describe "Frai KDL task loading" do
+RSpec.describe "Frai schema task loading" do
   after { Frai.reset! }
 
   around do |example|
@@ -16,41 +13,51 @@ RSpec.describe "Frai KDL task loading" do
       FileUtils.mkdir_p(File.join(root, "tasks", "sum_numbers"))
 
       File.write(
-        File.join(root, "tasks", "code_review", "task.kdl"),
-        <<~KDL
-          task name="code_review" {
-            mcp "jira"
-            mcp "gitlab"
+        File.join(root, "tasks", "code_review", "task.rb"),
+        <<~RUBY
+          class CodeReviewTask < BaseTask
+            schema do
+              mcp :jira
+              mcp :gitlab
 
-            const "high_value_threshold" 10
+              const :high_value_threshold, 10
 
-            directive name="main" {
-              param name="task_id" required=true type="String"
+              param :task_id, type: String, required: true
 
-              use name="code_style_guides" {
-                use name="naming_rules"
-                use name="formatting_rules"
-              }
+              use :code_style_guides do
+                use :naming_rules
+                use :formatting_rules
+              end
 
-              run name="analyze_diff" {
-                input type="String"
-                returns name="diff_value" type="String"
-              }
-            }
-          }
-        KDL
+              run :analyze_diff do
+                input   String
+                returns do
+                  diff_value String
+                end
+              end
+            end
+          end
+        RUBY
       )
 
       File.write(
-        File.join(root, "tasks", "sum_numbers", "task.kdl"),
-        <<~KDL
-          task name="sum_numbers" {
-            directive name="main" {
-              param name="input_numbers" required=true type="String"
-            }
-          }
-        KDL
+        File.join(root, "tasks", "sum_numbers", "task.rb"),
+        <<~RUBY
+          class SumNumbersTask < BaseTask
+            schema do
+              param :input_numbers, type: String, required: true
+
+              run :summarize do
+                input   [Integer]
+                returns total: Integer
+              end
+            end
+          end
+        RUBY
       )
+
+      load File.join(root, "tasks", "code_review", "task.rb")
+      load File.join(root, "tasks", "sum_numbers", "task.rb")
 
       Frai.configure do |config|
         config.project_root = root
@@ -61,7 +68,7 @@ RSpec.describe "Frai KDL task loading" do
     end
   end
 
-  it "hydrates one task from its own KDL and keeps another task isolated" do
+  it "hydrates one task from its own Ruby schema and keeps another task isolated" do
     code_review = CodeReviewTask._directive_declaration
     sum_numbers = SumNumbersTask._directive_declaration
     code_review_params = code_review&.params_declaration
@@ -80,6 +87,8 @@ RSpec.describe "Frai KDL task loading" do
     expect(code_review_sub_directives&.[](:code_style_guides)&.sub_directives&.keys).to eq([:naming_rules, :formatting_rules])
     expect(code_review_script_declarations).not_to be_nil
     expect(code_review_script_declarations&.keys).to eq([:analyze_diff])
+    expect(code_review_script_declarations&.[](:analyze_diff)&.input_type).to eq(String)
+    expect(code_review_script_declarations&.[](:analyze_diff)&.returns_schema).to eq(diff_value: String)
 
     expect(SumNumbersTask._mcps).to eq([])
     expect(SumNumbersTask._constants).to eq({})
@@ -88,7 +97,9 @@ RSpec.describe "Frai KDL task loading" do
     expect(sum_numbers_sub_directives).not_to be_nil
     expect(sum_numbers_sub_directives).to be_empty
     expect(sum_numbers_script_declarations).not_to be_nil
-    expect(sum_numbers_script_declarations).to be_empty
+    expect(sum_numbers_script_declarations&.keys).to eq([:summarize])
+    expect(sum_numbers_script_declarations&.[](:summarize)&.input_type).to eq([Integer])
+    expect(sum_numbers_script_declarations&.[](:summarize)&.returns_schema).to eq(total: Integer)
   end
 end
 

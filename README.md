@@ -117,42 +117,86 @@ end
 AnalyzeItemTask.call("some input")
 ```
 
-### With params, constants, MCP, sub-directives and scripts
+### Schema DSL
 
-`task.kdl` is the **contract** — params, constants, MCPs, sub-directives, and scripts are all declared here. The Ruby `task.rb` is a thin entrypoint that just provides `TaskNameTask.call`.
+All task declarations live inside `schema do ... end`:
 
-```kdl
-task name="code_review" {
-  mcp "jira"
-  mcp "gitlab"
+| Command | Description |
+|---------|-------------|
+| `llm false` | Skip the LLM call — return the rendered prompt as a string. Default: `true` |
+| `mcp :name` | Declare an MCP server dependency. Server must exist in `mcp/name.rb` |
+| `const :name, value` | Define a constant available in directives as `<%= name %>` |
+| `param :name, type: T, required: true` | Declare a required input parameter |
+| `param :name, type: T, default: val` | Declare an optional input parameter with default |
+| `use :name` | Include a sub-directive (`directives/name.md.erb`) |
+| `run :name do ... end` | Declare a script (`scripts/name.rb`) with input/returns |
 
-  const "max_issues" 10
+### Full example
 
-  directive name="main" {
-    param name="task_id"  required=true  type="String"
-    param name="language" required=false type="String" default="english"
-
-    use name="code_style_guides" {
-      use name="naming_rules"
-      use name="formatting_rules"
-    }
-
-    use name="context" {
-      run name="fetch_diff" {
-        input   type="String"
-        returns name="diff" type="String"
-      }
-    }
-  }
-}
-```
-
-The Ruby class stays minimal — all structure comes from `task.kdl`:
+`task.rb` is the **contract** — params, constants, MCPs, sub-directives, and scripts are all declared in `schema do ... end`.
 
 ```ruby
 class CodeReviewTask < BaseTask
+  schema do
+    mcp :jira
+    mcp :gitlab
+
+    const :max_issues, 10
+
+    param :task_id,  type: String, required: true
+    param :language, type: String, default: "english"
+
+    use :code_style_guides do
+      use :naming_rules
+      use :formatting_rules
+    end
+
+    use :context do
+      run :fetch_diff do
+        input String
+
+        returns do
+          diff String
+        end
+      end
+    end
+  end
 end
 ```
+
+For a single return field, shorthand is also supported:
+
+```ruby
+returns diff: String
+```
+
+### Skipping the LLM call
+
+By default every task sends the rendered prompt to the LLM. Set `llm false` to return the rendered prompt as a string without calling the LLM — useful for template-only tasks, intermediate pipeline steps, or debugging:
+
+```ruby
+class BuildReportTask < BaseTask
+  schema do
+    llm false
+
+    param :data, type: Hash, required: true
+
+    run :process do
+      input Hash
+      returns do
+        report String
+      end
+    end
+  end
+end
+```
+
+| `llm` | Behaviour |
+|-------|-----------|
+| `true` (default) | render prompt → call LLM → return response |
+| `false` | render prompt → return prompt string |
+
+The Ruby class stays minimal — all structure comes from `schema do ... end` in `task.rb`.
 
 **MCP validation rules:**
 - Task declares `mcp :name` but `mcp/name.rb` is missing → error at startup
@@ -302,17 +346,17 @@ Frai::MCP.define :portal do
 end
 ```
 
-**Step 2** — declare which MCPs each task needs in `task.kdl`:
+**Step 2** — declare which MCPs each task needs in `schema do` inside `task.rb`:
 
-```kdl
-task name="analyze" {
-  mcp "database"
-  mcp "search"
+```ruby
+class AnalyzeTask < BaseTask
+  schema do
+    mcp :database
+    mcp :search
 
-  directive name="main" {
-    // ...
-  }
-}
+    # ...
+  end
+end
 ```
 
 **Step 3** — register with Claude CLI:
@@ -354,7 +398,7 @@ Invoke from Claude CLI **inside the project directory**:
 /analyze_item query(some text) lang(en)
 ```
 
-Arguments use `name(value)` format — names match params declared in `task.kdl`.
+Arguments use `name(value)` format — names match params declared in `schema do`.
 Also supports `key:value` format: `/analyze_item query:some-text`
 
 If the command fails, Claude reports the error and stops — it does not retry or guess parameters.

@@ -1,34 +1,155 @@
 # frozen_string_literal: true
 
-require "kdl"
-
 module Frai
   # Base class for all Frai tasks.
   #
-  # The task contract lives entirely in tasks/<name>/task.kdl.
-  # The Ruby class is a thin entrypoint only — it provides TaskNameTask.call(params).
-  # All params, directives, mcp and constants are declared in KDL.
+  # Define the task contract directly in Ruby:
   #
-  # Calling convention:
-  #   TaskNameTask.call("plain string input")
-  #   TaskNameTask.call(param_name: value, ...)   # when params declared in task.kdl
+  #   class CodeReviewTask < BaseTask
+  #     schema do
+  #       mcp :jira
+  #       mcp :gitlab
   #
-  # Execution order:
-  #   1. Load and parse task.kdl
-  #   2. Validate params against task.kdl declarations
-  #   3. Check structure (all declared files exist)
-  #   4. Render directives (scripts run lazily inside renderer)
-  #   5. Call LLM via configured adapter
-  #   6. Return response
+  #       param :task_id,  type: String, required: true
+  #       param :language, type: String, default: "english"
   #
-  # @example
-  #   class AnalyzeItemTask < Frai::Task
+  #       use :code_style_guides do
+  #         use :naming_rules
+  #         use :formatting_rules
+  #       end
+  #
+  #       run :analyze_diff do
+  #         input   String
+  #         returns do
+  #           metrics String
+  #         end
+  #       end
+  #     end
   #   end
   #
-  #   AnalyzeItemTask.call("some text")
-  #   AnalyzeItemTask.call(name: "item", category: "things")
+  #   CodeReviewTask.call(task_id: "PDB-111")
   class Task
+    class SchemaBuilder
+      attr_reader :mcps, :constants, :llm_enabled
+
+      def initialize(task_name)
+        @task_name   = task_name
+        @mcps        = []
+        @constants   = {}
+        @params      = ParamsDeclaration.new
+        @runs        = []
+        @uses        = []
+        @llm_enabled = true
+      end
+
+      # Declare whether this task calls the LLM.
+      # Default is true. Set `llm false` to return the rendered prompt only.
+      def llm(value)
+        @llm_enabled = value
+      end
+
+      def mcp(name)
+        @mcps << name.to_sym
+      end
+
+      def const(name, value)
+        @constants[name.to_sym] = value
+      end
+
+      def param(name, positional_type = nil, type: nil, required: true, default: nil)
+        actual_type   = positional_type || type || String
+        resolved_type = resolve_type(actual_type)
+
+        if required && default.nil?
+          @params.required(name.to_sym, resolved_type)
+        else
+          @params.optional(name.to_sym, resolved_type, default: default)
+        end
+      end
+
+      def use(name, &block)
+        child = self.class.new(@task_name)
+        child.instance_eval(&block) if block_given?
+        @uses << [name.to_sym, child]
+      end
+
+      def run(name, input: nil, returns: nil, &block)
+        @runs << [name.to_sym, input, returns, block]
+      end
+
+      def build_directive(name = :main)
+        decl = DirectiveDeclaration.new(name)
+        apply_to(decl)
+        decl
+      end
+
+      def apply_to(decl)
+        if @params.required_params.any? || @params.optional_params.any?
+          params_snapshot = @params
+          decl.params do
+            params_snapshot.required_params.each do |param_name, type|
+              required(param_name, type)
+            end
+
+            params_snapshot.optional_params.each do |param_name, opts|
+              optional(param_name, opts[:type], default: opts[:default])
+            end
+          end
+        end
+
+        @uses.each do |child_name, child_builder|
+          decl.use(child_name) do
+            child_builder.apply_to(self)
+          end
+        end
+
+        @runs.each do |script_name, input_type, returns_schema, script_block|
+          decl.run(script_name, type_resolver: method(:resolve_type)) do
+            if script_block
+              instance_eval(&script_block)
+            end
+
+            input(input_type) if input_type && self.input_type.nil?
+            returns(returns_schema) if returns_schema && self.returns_schema.empty?
+          end
+        end
+      end
+
+      private
+
+
+      def resolve_type(value)
+        case value
+        when nil
+          nil
+        when Array
+          value.map { |item| resolve_type(item) }
+        when Hash
+          value.each_with_object({}) do |(key, nested), hash|
+            hash[key.to_sym] = resolve_type(nested)
+          end
+        when String, Symbol
+          Object.const_get(value.to_s)
+        else
+          value
+        end
+      rescue NameError
+        raise Frai::Error, "Unknown type '#{value}' in schema for #{@task_name}"
+      end
+    end
+
     class << self
+      # Define the task schema directly in the task class.
+      def schema(&block)
+        builder = SchemaBuilder.new(task_name)
+        builder.instance_eval(&block)
+
+        @_mcps                  = builder.mcps
+        @_constants             = builder.constants
+        @_llm_enabled           = builder.llm_enabled
+        @_directive_declaration = builder.build_directive(:main)
+      end
+
       # Returns the snake_case name derived from the class name.
       # e.g. CodeReviewTask => "code_review"
       #
@@ -42,19 +163,21 @@ module Frai
 
       # @return [Array<Symbol>]
       def _mcps
-        load_kdl_definition!
-        @_mcps
+        @_mcps ||= []
       end
 
       # @return [Hash]
       def _constants
-        load_kdl_definition!
-        @_constants
+        @_constants ||= {}
+      end
+
+      # @return [Boolean]
+      def _llm_enabled
+        @_llm_enabled.nil? ? true : @_llm_enabled
       end
 
       # @return [Frai::DirectiveDeclaration, nil]
       def _directive_declaration
-        load_kdl_definition!
         @_directive_declaration
       end
 
@@ -66,7 +189,6 @@ module Frai
 
       # Checks structure once per project_root. Subsequent calls are no-ops.
       def ensure_structure_checked!
-        load_kdl_definition!
         return if @_structure_checked_for == Frai.configuration.project_root
         StructureChecker.new(self).check!
         @_structure_checked_for = Frai.configuration.project_root
@@ -80,143 +202,6 @@ module Frai
       # Returns the task directory for this class, e.g. tasks/code_review.
       def task_root
         File.join(Frai.configuration.project_root, "tasks", task_name)
-      end
-
-      # Returns the KDL path for this task.
-      # Raises if task.kdl is not found.
-      def task_kdl_path
-        path = File.join(task_root, "task.kdl")
-        return path if File.exist?(path)
-
-        raise(Frai::Error,
-          "task.kdl not found for #{self}.\n" \
-          "Expected: #{path}")
-      end
-
-      # Loads task.kdl once per project_root and hydrates runtime declarations.
-      # Automatically reloads when project_root changes (e.g. between test examples).
-      def load_kdl_definition!
-        current_root = Frai.configuration.project_root
-        return if @_kdl_loaded_for == current_root
-
-        doc = KDL.parse(File.read(task_kdl_path))
-        hydrate_from_kdl!(doc)
-        @_kdl_loaded_for = current_root
-      end
-
-      private
-
-      def hydrate_from_kdl!(doc)
-        task_node = doc.nodes.find { |n| n.name == "task" }
-        raise Frai::Error, "No 'task' node found in task.kdl for #{task_name}" unless task_node
-
-        kdl_name = prop(task_node, "name")
-        if kdl_name && kdl_name != task_name
-          raise Frai::Error,
-            "task.kdl name '#{kdl_name}' does not match #{self} task name '#{task_name}'."
-        end
-
-        @_mcps = kdl_children(task_node, "mcp").map { |n| arg(n).to_sym }
-
-        @_constants = kdl_children(task_node, "const").each_with_object({}) do |n, h|
-          h[arg(n, 0).to_sym] = arg(n, 1)
-        end
-
-        main_node = kdl_children(task_node, "directive").find { |n| prop(n, "name") == "main" }
-        @_directive_declaration = build_directive_from_kdl(:main, main_node) if main_node
-      end
-
-      def build_directive_from_kdl(name, node)
-        return nil unless node
-
-        decl = DirectiveDeclaration.new(name)
-        apply_directive_kdl(decl, node)
-        decl
-      end
-
-      def apply_directive_kdl(decl, node)
-        return unless node
-
-        param_nodes = kdl_children(node, "param")
-        if param_nodes.any?
-          decl.params do
-            param_nodes.each do |p|
-              param_name = Frai::Task.send(:prop, p, "name").to_sym
-              type_str   = Frai::Task.send(:prop, p, "type")
-              required   = Frai::Task.send(:prop, p, "required")
-              default    = Frai::Task.send(:prop, p, "default")
-              type       = Frai::Task.send(:resolve_type, type_str)
-
-              if required == false
-                optional(param_name, type, default: default)
-              else
-                required(param_name, type)
-              end
-            end
-          end
-        end
-
-        kdl_children(node, "use").each do |use_node|
-          use_name = (prop(use_node, "name") || arg(use_node)).to_sym
-          decl.use(use_name) do
-            Frai::Task.send(:apply_directive_kdl, self, use_node)
-          end
-        end
-
-        kdl_children(node, "run").each do |run_node|
-          script_name = prop(run_node, "name").to_sym
-          decl.run(script_name) do
-            Frai::Task.send(:apply_script_kdl, self, run_node)
-          end
-        end
-      end
-
-      def apply_script_kdl(script_decl, node)
-        input_node = kdl_child(node, "input")
-        if input_node
-          script_decl.input(resolve_type(prop(input_node, "type")))
-        end
-
-        returns_nodes = kdl_children(node, "returns")
-        if returns_nodes.any?
-          schema = returns_nodes.each_with_object({}) do |r, h|
-            h[prop(r, "name").to_sym] = resolve_type(prop(r, "type"))
-          end
-          script_decl.returns(schema)
-        end
-      end
-
-      # KDL helpers
-
-      def prop(node, key)
-        node.properties[key]&.value
-      end
-
-      def arg(node, index = 0)
-        node.arguments[index]&.value
-      end
-
-      def kdl_children(node, name)
-        (node&.children || []).select { |n| n.name == name }
-      end
-
-      def kdl_child(node, name)
-        (node&.children || []).find { |n| n.name == name }
-      end
-
-      def resolve_type(value)
-        return nil if value.nil?
-
-        case value
-        when Array
-          value.map { |item| resolve_type(item) }
-        when String, Symbol
-          Object.const_get(value.to_s)
-        else
-          value
-        end
-      rescue NameError
-        raise Frai::Error, "Unknown type '#{value}' in task.kdl for #{task_name}"
       end
     end
 
@@ -247,12 +232,14 @@ module Frai
       end
 
       prompt = renderer.render(decl, input)
+
+      return prompt unless self.class._llm_enabled
+
       adapter.complete(prompt, mcp_servers: mcp_servers)
     end
 
     private
 
-    # Resolves declared MCP names to ServerDefinition objects.
     def declared_mcp_servers
       self.class._mcps.map do |name|
         server = Frai::MCP.find(name)
@@ -263,12 +250,9 @@ module Frai
       end
     end
 
-    # Verifies MCP servers are accessible before calling the LLM.
-    # API mode: adapter handles the actual connection check.
-    # CLI mode: verifies servers are registered with Claude CLI.
     def verify_mcp_servers!(servers)
       return if servers.empty?
-      return if Frai.configuration.model  # API mode — adapter will check
+      return if Frai.configuration.model
 
       registered = `claude mcp list 2>/dev/null`
       servers.each do |server|
@@ -288,7 +272,56 @@ module Frai
           "#{self.class} declares params — input must be a Hash, got #{input.class}"
       end
 
+      input = coerce_string_params(decl.params_declaration, input)
       decl.params_declaration.validate!(input, self.class)
+    end
+
+    # The CLI passes all param values as plain strings (e.g. `place_data({...})`
+    # becomes the string "{...}"). Coerce those strings into the types declared
+    # in the schema (Hash, Array) before strict validation runs.
+    def coerce_string_params(params_decl, input)
+      required = params_decl.required_params
+      optional = params_decl.optional_params.transform_values { |o| o[:type] }
+      all_types = required.merge(optional)
+
+      result = input.dup
+      all_types.each do |name, type|
+        next unless result.key?(name) && result[name].is_a?(String)
+        next unless [Hash, Array].include?(type)
+
+        result[name] = coerce_value(result[name], type)
+      end
+      result
+    end
+
+    def coerce_value(str, type)
+      # 1) Try strict JSON
+      require "json"
+      begin
+        parsed = JSON.parse(str)
+        return parsed if parsed.is_a?(type)
+      rescue JSON::ParserError
+        # fall through
+      end
+
+      # 2) Try YAML (handles additional formats)
+      require "yaml"
+      begin
+        parsed = YAML.safe_load(str)
+        return parsed if parsed.is_a?(type)
+      rescue StandardError
+        # fall through
+      end
+
+      # 3) Try Ruby literal (handles symbol keys, single quotes from CLI)
+      begin
+        parsed = eval(str) # rubocop:disable Security/Eval
+        return parsed if parsed.is_a?(type)
+      rescue StandardError
+        # fall through
+      end
+
+      str
     end
 
     def adapter
@@ -305,3 +338,7 @@ module Frai
     end
   end
 end
+
+# Project-generated task files use `BaseTask` as the conventional superclass.
+class BaseTask < Frai::Task; end unless defined?(::BaseTask)
+

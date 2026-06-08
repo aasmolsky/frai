@@ -7,10 +7,13 @@ require "frai"
 #   frai generate task my_task_name
 #
 # The task contract now lives in:
-#   tasks/my_task_name/task.kdl
+#   tasks/my_task_name/task.rb
 #
-# The Ruby file for each task is a thin entrypoint only:
+# The Ruby file for each task defines `schema do ... end` directly:
 #   class MyTask < BaseTask
+#     schema do
+#       ...
+#     end
 #   end
 class BaseTask < Frai::Task
 end

@@ -13,11 +13,15 @@ module Frai
   #     use :sum do
   #       run :parse_numbers do
   #         input   String
-  #         returns parsed_numbers: [Integer]
+  #         returns do
+  #           parsed_numbers [Integer]
+  #         end
   #       end
   #       run :sum_numbers do
   #         input   [Integer]
-  #         returns calculated_sum: Integer
+  #         returns do
+  #           calculated_sum Integer
+  #         end
   #       end
   #     end
   #
@@ -30,20 +34,103 @@ module Frai
     class ScriptDeclaration
       attr_reader :name, :input_type, :returns_schema
 
-      def initialize(name)
+      def initialize(name, type_resolver: nil)
         @name           = name
         @input_type     = nil
         @returns_schema = {}
+        @type_resolver  = type_resolver
       end
 
       # @param type [Class, Array] expected Ruby type of the input
       def input(type)
-        @input_type = type
+        @input_type = normalize_value(type)
       end
 
       # @param schema [Hash] expected return schema e.g. { parsed_numbers: [Integer] }
-      def returns(schema)
-        @returns_schema = schema
+      def returns(schema = nil, &block)
+        if block_given?
+          raise ArgumentError, "returns accepts either a hash or a block, not both" unless schema.nil?
+
+          builder = ReturnsDeclaration.new(type_resolver: @type_resolver)
+          builder.instance_eval(&block)
+          @returns_schema = builder.to_h
+        else
+          @returns_schema = normalize_value(schema) || {}
+        end
+      end
+
+      private
+
+      def normalize_value(value)
+        case value
+        when nil
+          nil
+        when Array
+          value.map { |item| normalize_value(item) }
+        when Hash
+          value.each_with_object({}) do |(key, nested), hash|
+            hash[key.to_sym] = normalize_value(nested)
+          end
+        when String, Symbol
+          return value unless @type_resolver
+
+          @type_resolver.call(value)
+        else
+          value
+        end
+      end
+
+      # Declares the fields returned by a script in block form.
+      class ReturnsDeclaration
+        def initialize(type_resolver:)
+          @type_resolver = type_resolver
+          @schema = {}
+        end
+
+        def to_h
+          @schema
+        end
+
+        def method_missing(name, *args, &block)
+          if block_given?
+            raise ArgumentError, "returns field #{name} cannot take both a type and a block" if args.any?
+
+            child = self.class.new(type_resolver: @type_resolver)
+            child.instance_eval(&block)
+            @schema[name.to_sym] = child.to_h
+          else
+            raise ArgumentError, "returns field #{name} expects a type" if args.empty?
+
+            @schema[name.to_sym] = normalize_value(args.first)
+          end
+
+          self
+        end
+
+        def respond_to_missing?(_name, _include_private = false)
+          true
+        end
+
+        private
+
+        def normalize_value(value)
+          case value
+          when nil
+            nil
+          when Array
+            value.map { |item| normalize_value(item) }
+          when Hash
+            value.each_with_object({}) do |(key, nested), hash|
+              hash[key.to_sym] = normalize_value(nested)
+            end
+          when String, Symbol
+            return value unless @type_resolver
+
+            @type_resolver.call(value)
+          else
+            value
+          end
+        end
       end
     end
 
@@ -70,8 +157,8 @@ module Frai
     end
 
     # DSL: declares a script dependency.
-    def run(name, &block)
-      decl = ScriptDeclaration.new(name)
+    def run(name, type_resolver: nil, &block)
+      decl = ScriptDeclaration.new(name, type_resolver: type_resolver)
       decl.instance_eval(&block) if block_given?
       @script_declarations[name] = decl
     end
