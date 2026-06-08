@@ -452,16 +452,17 @@ module Frai
     #
     # Supports:
     #   "key(value) key2(value2)"  → { key: "value", key2: "value2" }
+    #   "key({hash}) key2([arr])"  → { key: Hash, key2: Array }  (Ruby literals eval'd)
     #   "key:value key2:value2"    → { key: "value", key2: "value2" }
     #   "plain string"             → "plain string"
     #   nil                        → nil
     def parse_input(input)
       return nil if input.nil? || input.strip.empty?
 
-      # name(value) format
-      if input.match?(/\w+\([^)]*\)/)
-        pairs = input.scan(/(\w+)\(([^)]*)\)/)
-        return pairs.each_with_object({}) { |(k, v), h| h[k.to_sym] = v }
+      # name(value) format — handles nested parens/brackets in values
+      if input.strip.match?(/\A\w+\(/)
+        pairs = extract_key_value_pairs(input)
+        return pairs.each_with_object({}) { |(k, v), h| h[k.to_sym] = coerce_value(v) } unless pairs.empty?
       end
 
       # key:value format
@@ -471,6 +472,60 @@ module Frai
       end
 
       input
+    end
+
+    # Extracts key(value) pairs from a string, correctly handling nested
+    # parentheses, brackets, and braces inside values.
+    def extract_key_value_pairs(input)
+      pairs = []
+      pos   = 0
+
+      while pos < input.length
+        pos += 1 while pos < input.length && input[pos] =~ /\s/
+        break if pos >= input.length
+
+        key_match = input[pos..].match(/\A(\w+)\(/)
+        break unless key_match
+
+        key       = key_match[1]
+        val_start = pos + key.length + 1  # character after opening '('
+        depth     = 1
+        i         = val_start
+
+        while i < input.length && depth > 0
+          case input[i]
+          when "(" then depth += 1
+          when ")" then depth -= 1
+          end
+          i += 1 if depth > 0  # don't advance past the outer closing ')'
+        end
+
+        pairs << [key, input[val_start...i]]
+        pos = i + 1  # skip the closing ')'
+      end
+
+      pairs
+    end
+
+    # Coerces a string value to a Ruby Hash or Array when it looks like one.
+    # Uses eval so that Ruby-style literals (symbol keys, single-quoted strings)
+    # are handled correctly. Safe here because input comes from the local CLI.
+    def coerce_value(str)
+      stripped = str.strip
+      return stripped unless stripped.start_with?("{", "[")
+
+      begin
+        result = eval(stripped) # rubocop:disable Security/Eval
+        return result if result.is_a?(Hash) || result.is_a?(Array)
+      rescue SyntaxError, StandardError
+        # fall through to JSON attempt
+      end
+
+      begin
+        JSON.parse(stripped)
+      rescue JSON::ParserError
+        stripped
+      end
     end
   end
 end

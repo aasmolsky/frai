@@ -630,6 +630,154 @@ Error: MCP :database OAuth failed — token expired
 
 ---
 
+## Testing with RSpec
+
+Frai projects include a `spec/` folder with a conventions spec out of the box. You can add your own specs there to test tasks, scripts, pipelines, and applications.
+
+### Setup
+
+No changes to your host project required. `rspec` ships as a development dependency of the frai gem itself — it is always available through frai's bundle regardless of what the host project uses (Rails, another framework, or even Python).
+
+Create `spec/spec_helper.rb` inside your Frai project:
+
+```ruby
+# spec/spec_helper.rb
+ENV["FRAI_ENV"] = "test"
+
+require_relative "../config/frai"
+
+RSpec.configure do |config|
+  config.after { Frai.reset! }
+end
+```
+
+`FRAI_ENV=test` ensures all MCP servers are skipped and the LLM is never called — tasks return the rendered prompt instead of making API requests.
+
+### Running specs
+
+Specs run via frai's own bundle — the host project is not involved:
+
+```bash
+cd /path/to/frai
+bundle exec rspec /path/to/my_project/spec/
+```
+
+Run a single file:
+
+```bash
+bundle exec rspec /path/to/my_project/spec/tasks/code_review_spec.rb
+```
+
+Run a single example by line number:
+
+```bash
+bundle exec rspec /path/to/my_project/spec/tasks/code_review_spec.rb:12
+```
+
+### Testing a task
+
+```ruby
+# spec/tasks/code_review_spec.rb
+# frozen_string_literal: true
+require "spec_helper"
+
+RSpec.describe CodeReviewTask do
+  it "renders the prompt with given params", :aggregate_failures do
+    result = described_class.call(task_id: "PDB-123", language: "english")
+
+    expect(result).to include("PDB-123")
+    expect(result).to include("english")
+  end
+
+  it "raises on missing required param" do
+    expect { described_class.call(language: "english") }
+      .to raise_error(Frai::MissingParam, /task_id/)
+  end
+
+  it "raises on wrong param type" do
+    expect { described_class.call(task_id: 123) }
+      .to raise_error(Frai::InvalidParam, /expected String/)
+  end
+end
+```
+
+### Testing an application
+
+```ruby
+# spec/applications/application_spec.rb
+# frozen_string_literal: true
+require "spec_helper"
+
+RSpec.describe Application do
+  it "calls tasks in sequence and returns a result", :aggregate_failures do
+    result = described_class.call(reviews: [{ id: 1 }], language: "ru")
+
+    expect(result).to be_a(String)
+    expect(result).to include("reviews")
+  end
+end
+```
+
+### Testing a pipeline
+
+```ruby
+# spec/pipelines/review_pipeline_spec.rb
+# frozen_string_literal: true
+require "spec_helper"
+
+RSpec.describe ReviewPipeline do
+  it "chains tasks and returns final output" do
+    result = described_class.call("input data")
+
+    expect(result).to be_a(String)
+  end
+end
+```
+
+### Testing scripts in isolation
+
+Scripts are subprocesses that read JSON from stdin and write JSON to stdout — test them directly with `Open3`. Use a named `subject` and group related assertions with `:aggregate_failures`:
+
+```ruby
+# spec/scripts/fetch_data_spec.rb
+# frozen_string_literal: true
+require "json"
+require "open3"
+
+SCRIPT_PATH = File.expand_path("../tasks/code_review/scripts/fetch_data.rb", __dir__)
+
+def run_script(payload)
+  stdout, stderr, status = Open3.capture3("ruby", SCRIPT_PATH, stdin_data: JSON.generate(payload))
+  raise "Script failed:\n#{stderr}" unless status.success?
+
+  JSON.parse(stdout, symbolize_names: true)
+end
+
+RSpec.describe "fetch_data script" do
+  subject(:result) { run_script({ input: "PDB-123" }) }
+
+  it "returns expected keys", :aggregate_failures do
+    expect(result).to have_key(:diff)
+    expect(result[:diff]).to include("PDB-123")
+  end
+end
+```
+
+Scripts can be written in any language (Ruby, Python, bash) — the spec only cares about the JSON contract.
+
+### Key points
+
+| Concern | How it works in test |
+|---|---|
+| LLM calls | Skipped — `FRAI_ENV=test` uses the Null adapter, returns rendered prompt |
+| MCP servers | Skipped entirely in test/development |
+| Scripts | Run as real subprocesses (they are standalone executables) |
+| `rspec` availability | Dev dependency of frai — no changes to the host project's Gemfile needed |
+| `Frai.reset!` | Resets configuration between tests — prevents state leakage |
+
+
+---
+
 ## CLI reference
 
 | Command | Description |
