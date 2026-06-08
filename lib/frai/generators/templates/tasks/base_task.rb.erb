@@ -10,9 +10,11 @@ require "frai"
 #   tasks/my_task_name/task.rb
 #
 # The Ruby file for each task defines `schema do ... end` directly:
-#   class MyTask < BaseTask
-#     schema do
-#       ...
+#   module MyTask
+#     class Task < BaseTask
+#       schema do
+#         ...
+#       end
 #     end
 #   end
 class BaseTask < Frai::Task

@@ -1,23 +1,25 @@
-# This file exists only so Ruby code can still refer to <%= @class_name %>.
+# This file exists only so Ruby code can still refer to <%= @qualified_class_name %>.
 # All structure and validation live in this Ruby file.
-class <%= @class_name %> < BaseTask
-  schema do
-    # mcp :jira
-    # mcp :gitlab
+module <%= @module_name %>
+  class Task < BaseTask
+    schema do
+      # mcp :jira
+      # mcp :gitlab
 
-    # param :task_id,  type: String, required: true
-    # param :language, type: String, default: "english"
+      # param :task_id,  type: String, required: true
+      # param :language, type: String, default: "english"
 
-    # use :code_style_guides do
-    #   use :naming_rules
-    #   use :formatting_rules
-    # end
+      # use :code_style_guides do
+      #   use :naming_rules
+      #   use :formatting_rules
+      # end
 
-    # run :analyze_diff do
-    #   input   String
-    #   returns do
-    #     metrics String
-    #   end
-    # end
+      # run :analyze_diff do
+      #   input   String
+      #   returns do
+      #     metrics String
+      #   end
+      # end
+    end
   end
 end

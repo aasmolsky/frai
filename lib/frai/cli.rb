@@ -397,7 +397,8 @@ module Frai
 
       Dir.glob(File.join(tasks_dir, "*/task.rb")).each do |task_file|
         @name        = File.basename(File.dirname(task_file))
-        @class_name  = @name.split("_").map(&:capitalize).join + "Task"
+        @module_name = @name.split("_").map(&:capitalize).join
+        @qualified_class_name = "#{@module_name}::Task"
         command_file = File.join(commands_dir, "#{@name}.md")
         next if File.exist?(command_file)
 

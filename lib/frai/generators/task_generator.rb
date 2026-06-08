@@ -8,9 +8,10 @@ module Frai
       COMMANDS_DIR   = File.expand_path("../templates/commands", __FILE__)
 
       def initialize(name)
-        @name       = name
-        @class_name = name.split("_").map(&:capitalize).join + "Task"
-        @target_dir = File.join(Dir.pwd, "tasks", name)
+        @name                = name
+        @module_name         = name.split("_").map(&:capitalize).join
+        @qualified_class_name = "#{@module_name}::Task"
+        @target_dir          = File.join(Dir.pwd, "tasks", name)
       end
 
       def generate
@@ -68,13 +69,13 @@ module Frai
 
       def print_success
         puts ""
-        puts "  \e[32m✓\e[0m Generated task \e[1m#{@class_name}\e[0m"
+        puts "  \e[32m✓\e[0m Generated task \e[1m#{@qualified_class_name}\e[0m"
         puts ""
         puts "  Use in Claude CLI (from this project directory):"
         puts "    /#{@name} param_name(value)"
         puts ""
         puts "  Run directly:"
-        puts "    frai exec #{@class_name} \"param_name(value)\""
+        puts "    frai exec #{@qualified_class_name} \"param_name(value)\""
         puts ""
       end
     end

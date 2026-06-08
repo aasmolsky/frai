@@ -5,29 +5,31 @@ module Frai
   #
   # Define the task contract directly in Ruby:
   #
-  #   class CodeReviewTask < BaseTask
-  #     schema do
-  #       mcp :jira
-  #       mcp :gitlab
+  #   module CodeReview
+  #     class Task < BaseTask
+  #       schema do
+  #         mcp :jira
+  #         mcp :gitlab
   #
-  #       param :task_id,  type: String, required: true
-  #       param :language, type: String, default: "english"
+  #         param :task_id,  type: String, required: true
+  #         param :language, type: String, default: "english"
   #
-  #       use :code_style_guides do
-  #         use :naming_rules
-  #         use :formatting_rules
-  #       end
+  #         use :code_style_guides do
+  #           use :naming_rules
+  #           use :formatting_rules
+  #         end
   #
-  #       run :analyze_diff do
-  #         input   String
-  #         returns do
-  #           metrics String
+  #         run :analyze_diff do
+  #           input   String
+  #           returns do
+  #             metrics String
+  #           end
   #         end
   #       end
   #     end
   #   end
   #
-  #   CodeReviewTask.call(task_id: "PDB-111")
+  #   CodeReview::Task.call(task_id: "PDB-111")
   class Task
     class SchemaBuilder
       attr_reader :mcps, :constants, :llm_enabled
@@ -150,15 +152,22 @@ module Frai
         @_directive_declaration = builder.build_directive(:main)
       end
 
-      # Returns the snake_case name derived from the class name.
-      # e.g. CodeReviewTask => "code_review"
+      # Returns the snake_case name derived from the class name or namespace.
+      # e.g. CodeReview::Task => "code_review"
       #
       # @return [String]
       def task_name
-        name.gsub("Task", "")
-            .gsub(/([A-Z]+)([A-Z][a-z])/, '\1_\2')
-            .gsub(/([a-z\d])([A-Z])/, '\1_\2')
-            .downcase
+        base_name = if name.end_with?("::Task")
+          name.delete_suffix("::Task")
+        else
+          name.delete_suffix("Task")
+        end
+
+        base_name = base_name.gsub("::", "_")
+
+        base_name.gsub(/([A-Z]+)([A-Z][a-z])/, '\1_\2')
+                 .gsub(/([a-z\d])([A-Z])/, '\1_\2')
+                 .downcase
       end
 
       # @return [Array<Symbol>]

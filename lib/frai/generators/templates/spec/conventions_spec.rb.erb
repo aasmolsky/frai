@@ -1,14 +1,30 @@
-require "frai"
+# frozen_string_literal: true
+
+require "spec_helper"
 
 RSpec.describe "Project conventions" do
+  def camelize(value)
+    value.split("_").map(&:capitalize).join
+  end
+
+  def task_constant_name(file)
+    relative = file.sub(%r{\A.*?/tasks/}, "").sub(/\.rb\z/, "")
+    parts = relative.split(File::SEPARATOR)
+    namespace = parts[0...-1].map { |part| camelize(part) }
+    ([*namespace, camelize(parts.last)]).join("::")
+  end
+
+  def simple_constant_name(file)
+    camelize(File.basename(file, ".rb"))
+  end
+
   describe "tasks" do
     Dir[File.join(__dir__, "..", "tasks", "**", "*.rb")].each do |file|
       require file
-      class_name = File.basename(file, ".rb").split("_").map(&:capitalize).join
-      next if class_name == "BaseTask"
+      next if File.basename(file) == "base_task.rb"
 
-      describe class_name do
-        let(:klass) { Object.const_get(class_name) }
+      describe task_constant_name(file) do
+        let(:klass) { Object.const_get(task_constant_name(file)) }
 
         it "inherits from BaseTask" do
           expect(klass.ancestors).to include(BaseTask)
@@ -24,14 +40,32 @@ RSpec.describe "Project conventions" do
   describe "pipelines" do
     Dir[File.join(__dir__, "..", "pipelines", "**", "*.rb")].each do |file|
       require file
-      class_name = File.basename(file, ".rb").split("_").map(&:capitalize).join
-      next if class_name == "BasePipeline"
+      next if File.basename(file) == "base_pipeline.rb"
 
-      describe class_name do
-        let(:klass) { Object.const_get(class_name) }
+      describe simple_constant_name(file) do
+        let(:klass) { Object.const_get(simple_constant_name(file)) }
 
         it "inherits from BasePipeline" do
           expect(klass.ancestors).to include(BasePipeline)
+        end
+
+        it "responds to .call" do
+          expect(klass).to respond_to(:call)
+        end
+      end
+    end
+  end
+
+  describe "agents" do
+    Dir[File.join(__dir__, "..", "agents", "**", "*.rb")].each do |file|
+      require file
+      next if File.basename(file) == "base_agent.rb"
+
+      describe simple_constant_name(file) do
+        let(:klass) { Object.const_get(simple_constant_name(file)) }
+
+        it "inherits from BaseAgent" do
+          expect(klass.ancestors).to include(BaseAgent)
         end
 
         it "responds to .call" do

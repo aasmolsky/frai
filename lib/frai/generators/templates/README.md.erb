@@ -12,44 +12,28 @@ Requires Ruby >= 3.3.0.
 
 ## Installation
 
-Install Frai in the Ruby project that will run these files, or install it globally:
+Install Frai once so you can generate projects and use the CLI:
 
 ```bash
 gem install frai
 ```
 
-If your host application uses Bundler, add Frai there:
-
-```ruby
-gem "frai"
-```
-
-In that mode, run Frai commands through Bundler, for example:
-
-```bash
-bundle exec frai c
-bundle exec frai e AnalyzeItemTask "input"
-```
-
-`frai console` / `frai c` loads the current Frai project, so it only works from a directory that contains `config/frai.rb` and the Frai project structure.
-
-You may also need a provider gem in that host application, depending on the model you use:
-
-```ruby
-gem "anthropic"    # for Claude
-gem "ruby-openai"  # for OpenAI
-gem "ollama-ai"    # for Ollama (local models)
-```
+The generated project is self-contained: it gets its own `Gemfile` with `frai` and `rspec`, plus `.rspec` and `spec/spec_helper.rb`. After generating the project, use that project’s bundle for all Frai and RSpec commands.
 
 ---
 
 ## Getting started
 
 ```bash
+frai new my_project
+cd my_project
+bundle install
 cp .env.example .env    # fill in your secrets
-frai setup              # register MCP servers with Claude CLI
-frai gt analyze_item    # generate your first task
+bundle exec frai setup              # register MCP servers with Claude CLI
+bundle exec frai gt analyze_item    # generate your first task
 ```
+
+The generated project directory contains everything needed to develop and test Frai code locally.
 
 ---
 
@@ -57,23 +41,26 @@ frai gt analyze_item    # generate your first task
 
 ```
 <%= @project_name %>/
-  tasks/               # single LLM calls — the main building block
+  Gemfile                # frai + rspec
+  .rspec                 # loads spec_helper + docs format
+  tasks/                 # single LLM calls — the main building block
     base_task.rb
-  pipelines/           # sequential chains of tasks
+  pipelines/             # sequential chains of tasks
     base_pipeline.rb
-  agents/              # orchestrators that decide what to call and when
+  agents/                # orchestrators that decide what to call and when
     base_agent.rb
-  applications/        # public entrypoints for external callers
-  scripts/             # shared scripts in any language (Python, JS, bash...)
-  directives/          # shared prompt templates (reused across tasks)
+  applications/          # public entrypoints for external callers
+  scripts/               # shared scripts in any language (Python, JS, bash...)
+  directives/            # shared prompt templates (reused across tasks)
     base.md.erb
-  mcp/                 # external MCP server definitions
+  mcp/                   # external MCP server definitions
   config/
-    frai.rb            # model, API key, autoload
-  .env                 # local secrets — git-ignored
-  .env.example         # template to commit
+    frai.rb              # model, API key, autoload
+  .env                   # local secrets — git-ignored
+  .env.example           # template to commit
   .gitignore
   spec/
+    spec_helper.rb
     conventions_spec.rb
 ```
 
@@ -93,8 +80,8 @@ Default is `production`. In `development` and `test`, all MCP servers are skippe
 
 Override inline for a single run:
 ```bash
-FRAI_ENV=production frai exec AnalyzeItemTask "query(test)"
-FRAI_ENV=development frai exec AnalyzeItemTask "query(test)"
+FRAI_ENV=production frai exec AnalyzeItem::Task "query(test)"
+FRAI_ENV=development frai exec AnalyzeItem::Task "query(test)"
 ```
 
 ---
@@ -144,10 +131,12 @@ tasks/
 ### Minimal
 
 ```ruby
-class AnalyzeItemTask < BaseTask
+module AnalyzeItem
+  class Task < BaseTask
+  end
 end
 
-AnalyzeItemTask.call("some input")
+AnalyzeItem::Task.call("some input")
 ```
 
 ### Schema DSL
@@ -169,27 +158,29 @@ All task declarations live inside `schema do ... end`:
 `task.rb` is the **contract** — params, constants, MCPs, sub-directives, and scripts are all declared in `schema do ... end`.
 
 ```ruby
-class CodeReviewTask < BaseTask
-  schema do
-    mcp :jira
-    mcp :gitlab
+module CodeReview
+  class Task < BaseTask
+    schema do
+      mcp :jira
+      mcp :gitlab
 
-    const :max_issues, 10
+      const :max_issues, 10
 
-    param :task_id,  type: String, required: true
-    param :language, type: String, default: "english"
+      param :task_id,  type: String, required: true
+      param :language, type: String, default: "english"
 
-    use :code_style_guides do
-      use :naming_rules
-      use :formatting_rules
-    end
+      use :code_style_guides do
+        use :naming_rules
+        use :formatting_rules
+      end
 
-    use :context do
-      run :fetch_diff do
-        input String
+      use :context do
+        run :fetch_diff do
+          input String
 
-        returns do
-          diff String
+          returns do
+            diff String
+          end
         end
       end
     end
@@ -208,16 +199,18 @@ returns diff: String
 By default every task sends the rendered prompt to the LLM. Set `llm false` to return the rendered prompt as a string without calling the LLM — useful for template-only tasks, intermediate pipeline steps, or debugging:
 
 ```ruby
-class BuildReportTask < BaseTask
-  schema do
-    llm false
+module BuildReport
+  class Task < BaseTask
+    schema do
+      llm false
 
-    param :data, type: Hash, required: true
+      param :data, type: Hash, required: true
 
-    run :process do
-      input Hash
-      returns do
-        report String
+      run :process do
+        input Hash
+        returns do
+          report String
+        end
       end
     end
   end
@@ -247,15 +240,18 @@ Directives are Markdown + ERB prompt templates. `main.md.erb` is always the entr
 
 Params, constants, and script results are available as plain methods:
 
-```erb
-You are an expert analyst.
-Analyze task <%%= task_id %> in <%%= lang %>.
+```ruby
+module Analyze
+  class Task < BaseTask
+    schema do
+      mcp :database
+      mcp :search
+
+      # ...
+    end
+  end
+end
 ```
-
-### Scripts
-
-```erb
-% run("fetch_diff", params: :task_id, return: :diff)
 
 <%%= diff %>
 ```
@@ -267,9 +263,6 @@ Analyze task <%%= task_id %> in <%%= lang %>.
 
 <%%= use("check_resources") %>
 ```
-
-### Multiple inputs
-
 ```erb
 % run("analyze", params: [:diff, :language], return: :result)
 
@@ -382,12 +375,14 @@ end
 **Step 2** — declare which MCPs each task needs in `schema do` inside `task.rb`:
 
 ```ruby
-class AnalyzeTask < BaseTask
-  schema do
-    mcp :database
-    mcp :search
+module Analyze
+  class Task < BaseTask
+    schema do
+      mcp :database
+      mcp :search
 
-    # ...
+      # ...
+    end
   end
 end
 ```
@@ -447,8 +442,8 @@ frai gp review_pipeline
 ```ruby
 class ReviewPipeline < BasePipeline
   def call(input)
-    diff   = FetchDiffTask.call(input)
-    review = CodeReviewTask.call(diff)
+    diff   = FetchDiff::Task.call(input)
+    review = CodeReview::Task.call(diff)
     review
   end
 end
@@ -464,8 +459,8 @@ An application is the **stable public entrypoint** for a Frai project. External 
 # applications/application.rb
 class Application < Frai::Application
   def call(reviews:, language: "english")
-    data     = FetchDataTask.call(reviews)
-    response = AnalyzeTask.call(language: language, data: data)
+    data     = FetchData::Task.call(reviews)
+    response = Analyze::Task.call(language: language, data: data)
     response
   end
 end
@@ -478,14 +473,14 @@ You can later add a step, swap a task, or change the flow — the external call 
 ```ruby
 # Before
 def call(reviews:, language: "english")
-  AnalyzeTask.call(reviews)
+  Analyze::Task.call(reviews)
 end
 
 # After — caller doesn't need to change
 def call(reviews:, language: "english")
-  normalized = NormalizeTask.call(reviews)
-  analyzed   = AnalyzeTask.call(normalized)
-  TranslateTask.call(analyzed, language: language)
+  normalized = Normalize::Task.call(reviews)
+  analyzed   = Analyze::Task.call(normalized)
+  Translate::Task.call(analyzed, language: language)
 end
 ```
 
@@ -538,8 +533,8 @@ An agent is an **LLM-driven orchestrator** — it decides which tasks and tools 
 ```ruby
 class ResearchAgent < BaseAgent
   def call(input)
-    data    = FetchDataTask.call(input)
-    summary = SummarizeTask.call(data)
+    data    = FetchData::Task.call(input)
+    summary = Summarize::Task.call(data)
     summary
   end
 end
@@ -647,7 +642,7 @@ end
 Write task output and errors to a log file — useful for cron jobs and automation:
 
 ```bash
-frai exec AnalyzeItemTask "query(some text)" --log logs/analyze.log
+frai exec AnalyzeItem::Task "query(some text)" --log logs/analyze.log
 ```
 
 Directories are created automatically if they don't exist. Each entry includes a timestamp and status:
@@ -665,22 +660,23 @@ Error: MCP :database OAuth failed — token expired
 
 ## Testing with RSpec
 
-Frai projects include a `spec/` folder with a conventions spec out of the box. You can add your own specs there to test tasks, scripts, pipelines, and applications.
+Frai projects include a ready-to-run `spec/` folder, a generated `Gemfile`, and a `.rspec` file out of the box. You can add your own specs there to test tasks, scripts, pipelines, applications, and agents.
 
 ### Setup
 
-No changes to this project required. `rspec` ships as a development dependency of the frai gem itself — it is always available through frai's bundle regardless of what the host project uses (Rails, another framework, or even Python).
+No extra test bundle is needed. The generated project already includes `rspec` in its own Gemfile, and `.rspec` loads `spec_helper` automatically.
 
 Create `spec/spec_helper.rb`:
 
 ```ruby
 # spec/spec_helper.rb
+require "frai"
+
 ENV["FRAI_ENV"] = "test"
 
 require_relative "../config/frai"
 
 RSpec.configure do |config|
-  config.after { Frai.reset! }
 end
 ```
 
@@ -688,24 +684,26 @@ end
 
 ### Running specs
 
-Specs run via frai's own bundle — the host project is not involved:
+Run the whole suite from the generated project root:
 
 ```bash
-cd /path/to/frai
-bundle exec rspec /path/to/<%= @project_name %>/spec/
+cd /path/to/<%= @project_name %>
+bundle exec rspec
 ```
 
 Run a single file:
 
 ```bash
-bundle exec rspec /path/to/<%= @project_name %>/spec/tasks/my_task_spec.rb
+bundle exec rspec spec/tasks/my_task_spec.rb
 ```
 
 Run a single example by line number:
 
 ```bash
-bundle exec rspec /path/to/<%= @project_name %>/spec/tasks/my_task_spec.rb:12
+bundle exec rspec spec/tasks/my_task_spec.rb:12
 ```
+
+Because `.rspec` already requires `spec_helper`, you usually do not need to pass `--require spec_helper` manually.
 
 ### Testing a task
 
@@ -714,7 +712,7 @@ bundle exec rspec /path/to/<%= @project_name %>/spec/tasks/my_task_spec.rb:12
 # frozen_string_literal: true
 require "spec_helper"
 
-RSpec.describe AnalyzeItemTask do
+RSpec.describe AnalyzeItem::Task do
   it "renders the prompt with given params", :aggregate_failures do
     result = described_class.call(query: "test input", lang: "en")
 

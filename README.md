@@ -77,8 +77,8 @@ Default is `production`. In `development` and `test`, all MCP servers are skippe
 
 Override inline for a single run:
 ```bash
-FRAI_ENV=production frai exec AnalyzeItemTask "query(test)"
-FRAI_ENV=development frai exec AnalyzeItemTask "query(test)"
+FRAI_ENV=production frai exec AnalyzeItem::Task "query(test)"
+FRAI_ENV=development frai exec AnalyzeItem::Task "query(test)"
 ```
 
 ---
@@ -111,10 +111,12 @@ A task is the core unit — **one LLM call**. It validates input, runs scripts, 
 ### Minimal
 
 ```ruby
-class AnalyzeItemTask < BaseTask
+module AnalyzeItem
+  class Task < BaseTask
+  end
 end
 
-AnalyzeItemTask.call("some input")
+AnalyzeItem::Task.call("some input")
 ```
 
 ### Schema DSL
@@ -136,27 +138,29 @@ All task declarations live inside `schema do ... end`:
 `task.rb` is the **contract** — params, constants, MCPs, sub-directives, and scripts are all declared in `schema do ... end`.
 
 ```ruby
-class CodeReviewTask < BaseTask
-  schema do
-    mcp :jira
-    mcp :gitlab
+module CodeReview
+  class Task < BaseTask
+    schema do
+      mcp :jira
+      mcp :gitlab
 
-    const :max_issues, 10
+      const :max_issues, 10
 
-    param :task_id,  type: String, required: true
-    param :language, type: String, default: "english"
+      param :task_id,  type: String, required: true
+      param :language, type: String, default: "english"
 
-    use :code_style_guides do
-      use :naming_rules
-      use :formatting_rules
-    end
+      use :code_style_guides do
+        use :naming_rules
+        use :formatting_rules
+      end
 
-    use :context do
-      run :fetch_diff do
-        input String
+      use :context do
+        run :fetch_diff do
+          input String
 
-        returns do
-          diff String
+          returns do
+            diff String
+          end
         end
       end
     end
@@ -175,16 +179,18 @@ returns diff: String
 By default every task sends the rendered prompt to the LLM. Set `llm false` to return the rendered prompt as a string without calling the LLM — useful for template-only tasks, intermediate pipeline steps, or debugging:
 
 ```ruby
-class BuildReportTask < BaseTask
-  schema do
-    llm false
+module BuildReport
+  class Task < BaseTask
+    schema do
+      llm false
 
-    param :data, type: Hash, required: true
+      param :data, type: Hash, required: true
 
-    run :process do
-      input Hash
-      returns do
-        report String
+      run :process do
+        input Hash
+        returns do
+          report String
+        end
       end
     end
   end
@@ -214,15 +220,18 @@ Directives are Markdown + ERB prompt templates. `main.md.erb` is always the entr
 
 Params, constants, and script results are available as plain methods:
 
-```erb
-You are an expert analyst.
-Analyze task <%= task_id %> in <%= lang %>.
+```ruby
+module Analyze
+  class Task < BaseTask
+    schema do
+      mcp :database
+      mcp :search
+
+      # ...
+    end
+  end
+end
 ```
-
-### Scripts
-
-```erb
-% run("fetch_diff", params: :task_id, return: :diff)
 
 <%= diff %>
 ```
@@ -349,12 +358,14 @@ end
 **Step 2** — declare which MCPs each task needs in `schema do` inside `task.rb`:
 
 ```ruby
-class AnalyzeTask < BaseTask
-  schema do
-    mcp :database
-    mcp :search
+module Analyze
+  class Task < BaseTask
+    schema do
+      mcp :database
+      mcp :search
 
-    # ...
+      # ...
+    end
   end
 end
 ```
@@ -414,8 +425,8 @@ frai gp review_pipeline
 ```ruby
 class ReviewPipeline < BasePipeline
   def call(input)
-    diff   = FetchDiffTask.call(input)
-    review = CodeReviewTask.call(diff)
+    diff   = FetchDiff::Task.call(input)
+    review = CodeReview::Task.call(diff)
     review
   end
 end
@@ -431,8 +442,8 @@ An application is the **stable public entrypoint** for a Frai project. External 
 # applications/application.rb
 class Application < Frai::Application
   def call(reviews:, language: "english")
-    data     = FetchDataTask.call(reviews)
-    response = AnalyzeTask.call(language: language, data: data)
+    data     = FetchData::Task.call(reviews)
+    response = Analyze::Task.call(language: language, data: data)
     response
   end
 end
@@ -445,14 +456,14 @@ You can later add a step, swap a task, or change the flow — the external call 
 ```ruby
 # Before
 def call(reviews:, language: "english")
-  AnalyzeTask.call(reviews)
+  Analyze::Task.call(reviews)
 end
 
 # After — caller doesn't need to change
 def call(reviews:, language: "english")
-  normalized = NormalizeTask.call(reviews)
-  analyzed   = AnalyzeTask.call(normalized)
-  TranslateTask.call(analyzed, language: language)
+  normalized = Normalize::Task.call(reviews)
+  analyzed   = Analyze::Task.call(normalized)
+  Translate::Task.call(analyzed, language: language)
 end
 ```
 
@@ -505,8 +516,8 @@ An agent is an **LLM-driven orchestrator** — it decides which tasks and tools 
 ```ruby
 class ResearchAgent < BaseAgent
   def call(input)
-    data    = FetchDataTask.call(input)
-    summary = SummarizeTask.call(data)
+    data    = FetchData::Task.call(input)
+    summary = Summarize::Task.call(data)
     summary
   end
 end
@@ -614,7 +625,7 @@ end
 Write task output and errors to a log file — useful for cron jobs and automation:
 
 ```bash
-frai exec AnalyzeItemTask "query(some text)" --log logs/analyze.log
+frai exec AnalyzeItem::Task "query(some text)" --log logs/analyze.log
 ```
 
 Directories are created automatically if they don't exist. Each entry includes a timestamp and status:
@@ -681,7 +692,7 @@ bundle exec rspec /path/to/my_project/spec/tasks/code_review_spec.rb:12
 # frozen_string_literal: true
 require "spec_helper"
 
-RSpec.describe CodeReviewTask do
+RSpec.describe CodeReview::Task do
   it "renders the prompt with given params", :aggregate_failures do
     result = described_class.call(task_id: "PDB-123", language: "english")
 

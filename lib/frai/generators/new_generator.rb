@@ -47,11 +47,14 @@ module Frai
 
       def copy_templates
         templates = {
+          "Gemfile.erb"                  => "Gemfile",
+          ".rspec.erb"                   => ".rspec",
           "directives/base.md.erb.erb"    => "directives/base.md.erb",
           "tasks/base_task.rb.erb"               => "tasks/base_task.rb",
           "pipelines/base_pipeline.rb.erb"=> "pipelines/base_pipeline.rb",
           "agents/base_agent.rb.erb"      => "agents/base_agent.rb",
           "config/frai.rb.erb"            => "config/frai.rb",
+          "spec/spec_helper.rb.erb"       => "spec/spec_helper.rb",
           "spec/conventions_spec.rb.erb"  => "spec/conventions_spec.rb",
           "README.md.erb"                 => "README.md",
           ".env.erb"                      => ".env",
