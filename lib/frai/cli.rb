@@ -53,10 +53,77 @@ module Frai
       Frai::Generators::ProjectDestroyer.new.destroy
     end
 
+    desc "list", "List all tasks, MCP servers and shared directives in the project"
+    def list
+      load_project!
+
+      puts "\nTasks:\n"
+      task_classes.each do |klass|
+        task      = klass.task_name
+        decl      = klass._directive_declaration
+        root      = Frai.configuration.project_root
+        task_desc = read_directive_desc(root, task, :main)
+
+        puts "  # #{task_desc}" if task_desc
+        puts "  #{task}"
+        print_list("params", params_array(decl&.params_declaration))
+        print_list("mcp",    klass._mcps.map { |m|
+          s = Frai::MCP.find(m)
+          "#{m}#{s ? " (#{s.type}#{s.oauth_enabled ? '/oauth' : ''})" : ''}"
+        }) unless klass._mcps.empty?
+        print_directives(decl, root, task)
+        print_scripts(decl, root, task)
+        puts
+      end
+
+      pipelines = ObjectSpace.each_object(Class)
+                             .select { |k| k < Frai::Pipeline && k.name && k.superclass != Frai::Pipeline }
+                             .sort_by(&:name)
+      unless pipelines.empty?
+        puts "Pipelines:\n"
+        pipelines.each do |klass|
+          desc = read_class_desc(klass)
+          puts desc ? "  #{klass.name} — #{desc}" : "  #{klass.name}"
+        end
+        puts
+      end
+
+      agents = ObjectSpace.each_object(Class)
+                          .select { |k| k < Frai::Agent && k.name && k.superclass != Frai::Agent }
+                          .sort_by(&:name)
+      unless agents.empty?
+        puts "Agents:\n"
+        agents.each do |klass|
+          desc = read_class_desc(klass)
+          puts desc ? "  #{klass.name} — #{desc}" : "  #{klass.name}"
+        end
+        puts
+      end
+
+      puts "MCP servers:\n"
+      Frai::MCP.all.each do |s|
+        transport = s.type.to_s.upcase
+        auth      = s.oauth_enabled ? "/oauth" : ""
+        location  = s.type == :http ? s.url_value.to_s : "#{s.command_value} #{s.args_value.join(' ')}"
+        puts "  # #{s.description}" if s.description
+        puts "  - #{s.name}  #{transport}#{auth}"
+        puts "      #{location}"
+      end
+
+      puts "\nShared directives:\n"
+      shared = Dir.glob(File.join(Frai.configuration.project_root, "directives", "*.md.erb"))
+      shared.each do |f|
+        name = File.basename(f, ".md.erb")
+        desc = read_directive_desc(Frai.configuration.project_root, nil, name) rescue nil
+        puts "  # #{desc}" if desc
+        puts "  - #{name}"
+      end
+      puts
+    end
+
     desc "remove task TASK_NAME", "Remove a task and its Claude CLI command"
     def remove(type, task_name)
       abort "Error: unknown type '#{type}'. Use: task" unless type == "task"
-      load_project!
       Frai::Generators::TaskRemover.new(task_name).remove
     end
 
@@ -145,6 +212,7 @@ module Frai
       IRB.start(__FILE__)
     end
 
+    map "l"  => "list"
     map "g"  => "generate"
     map "r"  => "remove"
     map "c"  => "console"
@@ -169,6 +237,114 @@ module Frai
     end
 
     private
+
+    def task_classes
+      ObjectSpace.each_object(Class)
+                 .select { |k| k < Frai::Task && k.name && k.superclass != Frai::Task }
+                 .sort_by(&:name)
+    end
+
+    def params_array(decl)
+      return [] unless decl
+      required = decl.required_params.map { |n, t| "#{n}(required, #{t})" }
+      optional = decl.optional_params.map { |n, o|
+        default = o[:default].nil? ? "" : ", default: #{o[:default].inspect}"
+        "#{n}(optional, #{o[:type]}#{default})"
+      }
+      required + optional
+    end
+
+    def format_params(decl)
+      params_array(decl).join(", ")
+    end
+
+    def format_directives(decl)
+      return "" unless decl
+      decl.sub_directives.keys.map(&:to_s).join(", ")
+    end
+
+    def print_directives(decl, root, task_name)
+      return unless decl
+      dirs = decl.sub_directives.keys
+      return if dirs.empty?
+      puts "    directives:"
+      dirs.each do |name|
+        desc = read_directive_desc(root, task_name, name)
+        puts "      # #{desc}" if desc
+        puts "      - #{name}"
+      end
+    end
+
+    def format_scripts(decl)
+      return "" unless decl
+      collect_scripts(decl).map(&:to_s).join(", ")
+    end
+
+    # Extract # desc: from a Ruby class file (pipeline, agent)
+    def read_class_desc(klass)
+      path = klass.instance_method(:call).source_location&.first rescue nil
+      return nil unless path && File.exist?(path)
+      File.foreach(path).first(10).each do |line|
+        m = line.match(/^\s*#\s*desc:\s*(.+)/)
+        return m[1].strip if m
+      end
+      nil
+    rescue
+      nil
+    end
+
+    # Extract <desc>...</desc> from a directive template
+    def read_directive_desc(root, task_name, directive_name)
+      candidates = task_name ? [
+        File.join(root, "tasks", task_name, "directives", "#{directive_name}.md.erb"),
+        File.join(root, "tasks", task_name, "directives", "#{directive_name}.erb")
+      ] : []
+      candidates += [File.join(root, "directives", "#{directive_name}.md.erb")]
+      path = candidates.find { |p| File.exist?(p) }
+      return nil unless path
+      content = File.read(path)
+      m = content.match(/<desc>(.*?)<\/desc>/m)
+      m ? m[1].strip : nil
+    rescue
+      nil
+    end
+
+    # Extract # desc: from a script file
+    def read_script_desc(path)
+      return nil unless File.exist?(path)
+      File.foreach(path).first(5).each do |line|
+        m = line.match(/^\s*#\s*desc:\s*(.+)/)
+        return m[1].strip if m
+      end
+      nil
+    rescue
+      nil
+    end
+
+    def print_list(label, items)
+      return if items.empty?
+      puts "    #{label}:"
+      items.each { |i| puts "      - #{i}" }
+    end
+
+    def print_scripts(decl, root, task_name)
+      return unless decl
+      names = collect_scripts(decl)
+      return if names.empty?
+      puts "    scripts:"
+      names.each do |n|
+        script_path = Dir.glob(File.join(root, "tasks", task_name, "scripts", "#{n}.*")).first
+        desc = script_path ? read_script_desc(script_path) : nil
+        puts "      # #{desc}" if desc
+        puts "      - #{n}"
+      end
+    end
+
+    def collect_scripts(decl)
+      names = decl.script_declarations.keys
+      decl.sub_directives.each_value { |sub| names += collect_scripts(sub) }
+      names.uniq
+    end
 
     def log_message(path, message, success:)
       return unless path
@@ -221,7 +397,8 @@ module Frai
 
       Dir.glob(File.join(tasks_dir, "*/task.rb")).each do |task_file|
         @name        = File.basename(File.dirname(task_file))
-        @class_name  = @name.split("_").map(&:capitalize).join + "Task"
+        @module_name = @name.split("_").map(&:capitalize).join
+        @qualified_class_name = "#{@module_name}::Task"
         command_file = File.join(commands_dir, "#{@name}.md")
         next if File.exist?(command_file)
 
@@ -238,6 +415,16 @@ module Frai
     end
 
     def register_mcp(server)
+      if server.type == :http && server.url_value.to_s.strip.empty?
+        puts "  \e[33mskip\e[0m    #{server.name} — URL not set (check your .env)"
+        return
+      end
+
+      if server.type == :stdio && server.command_value.to_s.strip.empty?
+        puts "  \e[33mskip\e[0m    #{server.name} — command not set (check your .env)"
+        return
+      end
+
       cmd = if server.type == :http
         ["claude", "mcp", "add", "--scope", "local",
          "--transport", "http",
@@ -266,16 +453,17 @@ module Frai
     #
     # Supports:
     #   "key(value) key2(value2)"  → { key: "value", key2: "value2" }
+    #   "key({hash}) key2([arr])"  → { key: Hash, key2: Array }  (Ruby literals eval'd)
     #   "key:value key2:value2"    → { key: "value", key2: "value2" }
     #   "plain string"             → "plain string"
     #   nil                        → nil
     def parse_input(input)
       return nil if input.nil? || input.strip.empty?
 
-      # name(value) format
-      if input.match?(/\w+\([^)]*\)/)
-        pairs = input.scan(/(\w+)\(([^)]*)\)/)
-        return pairs.each_with_object({}) { |(k, v), h| h[k.to_sym] = v }
+      # name(value) format — handles nested parens/brackets in values
+      if input.strip.match?(/\A\w+\(/)
+        pairs = extract_key_value_pairs(input)
+        return pairs.each_with_object({}) { |(k, v), h| h[k.to_sym] = coerce_value(v) } unless pairs.empty?
       end
 
       # key:value format
@@ -285,6 +473,60 @@ module Frai
       end
 
       input
+    end
+
+    # Extracts key(value) pairs from a string, correctly handling nested
+    # parentheses, brackets, and braces inside values.
+    def extract_key_value_pairs(input)
+      pairs = []
+      pos   = 0
+
+      while pos < input.length
+        pos += 1 while pos < input.length && input[pos] =~ /\s/
+        break if pos >= input.length
+
+        key_match = input[pos..].match(/\A(\w+)\(/)
+        break unless key_match
+
+        key       = key_match[1]
+        val_start = pos + key.length + 1  # character after opening '('
+        depth     = 1
+        i         = val_start
+
+        while i < input.length && depth > 0
+          case input[i]
+          when "(" then depth += 1
+          when ")" then depth -= 1
+          end
+          i += 1 if depth > 0  # don't advance past the outer closing ')'
+        end
+
+        pairs << [key, input[val_start...i]]
+        pos = i + 1  # skip the closing ')'
+      end
+
+      pairs
+    end
+
+    # Coerces a string value to a Ruby Hash or Array when it looks like one.
+    # Uses eval so that Ruby-style literals (symbol keys, single-quoted strings)
+    # are handled correctly. Safe here because input comes from the local CLI.
+    def coerce_value(str)
+      stripped = str.strip
+      return stripped unless stripped.start_with?("{", "[")
+
+      begin
+        result = eval(stripped) # rubocop:disable Security/Eval
+        return result if result.is_a?(Hash) || result.is_a?(Array)
+      rescue SyntaxError, StandardError
+        # fall through to JSON attempt
+      end
+
+      begin
+        JSON.parse(stripped)
+      rescue JSON::ParserError
+        stripped
+      end
     end
   end
 end

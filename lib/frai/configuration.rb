@@ -9,16 +9,20 @@ module Frai
   #
   # @example With model (API mode — RubyLLM calls the LLM):
   #   Frai.configure do |config|
-  #     config.model   = ENV["LLM_MODEL"]    # e.g. "claude-opus-4-6"
-  #     config.api_key = ENV["API_KEY"]
+  #     config.model   = ENV["LLM_MODEL"]      # e.g. "claude-opus-4-6"
+  #     config.api_key = ENV["LLM_API_KEY"]
   #   end
   class Configuration
     # LLM model name. If nil — prompt is returned as-is (CLI mode).
     # If set — RubyLLM calls the provider API with this model.
     attr_accessor :model
 
-    # API key for the LLM provider. Read from ENV["API_KEY"] by default.
+    # API key for the LLM provider. Read from ENV["LLM_API_KEY"] by default.
     attr_accessor :api_key
+
+    # Environment: :development or :production (default).
+    # In development: OAuth MCP servers are skipped with a warning.
+    attr_accessor :env
 
     # Root directory of the current project (auto-detected).
     attr_accessor :project_root
@@ -26,7 +30,25 @@ module Frai
     def initialize
       @model        = nil
       @api_key      = nil
+      @env          = (ENV["FRAI_ENV"] || "production").to_sym
       @project_root = Dir.pwd
+    end
+
+    def development?
+      @env == :development
+    end
+
+    def test?
+      @env == :test
+    end
+
+    def production?
+      @env == :production
+    end
+
+    # Both development and test skip MCPs and LLM calls
+    def non_production?
+      development? || test?
     end
   end
 
@@ -52,9 +74,10 @@ module Frai
     #
     # @param root [String] project root directory
     def autoload!(root)
-      %w[tasks pipelines agents].each do |dir|
+      %w[tasks pipelines agents applications].each do |dir|
         Dir[File.join(root, dir, "**", "*.rb")]
           .reject { |f| f.include?("/scripts/") }
+          .sort_by { |f| [f.count(File::SEPARATOR), f] }
           .each do |f|
             if File.read(f).match?(/^\s*(\$stdin|STDIN)\b/)
               raise Frai::Error,

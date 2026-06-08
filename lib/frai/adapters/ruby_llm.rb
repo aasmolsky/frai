@@ -29,7 +29,7 @@ module Frai
 
       def configure_provider(model, api_key)
         key = api_key.to_s.strip
-        raise Frai::Error, "API_KEY is not set" if key.empty?
+        raise Frai::Error, "LLM_API_KEY is not set" if key.empty?
 
         RubyLLM.configure do |c|
           case model.to_s
