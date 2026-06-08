@@ -63,15 +63,18 @@ bundle exec frai e TaskName # exec  — only needed in bundler context
 ```bash
 frai new my_project
 cd my_project
-cp .env.example .env    # fill in your secrets
-frai setup              # register MCP servers with Claude CLI
-frai gt analyze_item    # generate your first task
+bundle install              # installs rspec
+cp .env.example .env        # fill in your secrets
+frai setup                  # register MCP servers with Claude CLI
+frai gt analyze_item        # generate your first task
 ```
 
 **Generated structure:**
 
 ```
 my_project/
+  Gemfile                # rspec
+  .rspec
   tasks/
     base_task.rb
     analyze_item/                           # new task created
@@ -86,6 +89,7 @@ my_project/
   applications/            # public entrypoints for external callers
   scripts/                 # shared scripts
   directives/              # shared prompt templates
+    base.md.erb
   mcp/                     # external MCP server definitions
   config/
     frai.rb                # model, API key, autoload
@@ -93,6 +97,7 @@ my_project/
   .env.example             # template to commit
   .gitignore
   spec/
+    spec_helper.rb
     conventions_spec.rb
 ```
 
@@ -784,9 +789,9 @@ Frai projects include a `spec/` folder with a conventions spec out of the box. Y
 
 ### Setup
 
-No changes to your host project required. `rspec` ships as a development dependency of the frai gem itself — it is always available through frai's bundle regardless of what the host project uses (Rails, another framework, or even Python).
+Generated projects include `rspec` in their own `Gemfile` and a pre-generated `spec/spec_helper.rb`. No extra configuration needed — just run `bundle exec rspec` from the project root.
 
-Create `spec/spec_helper.rb` inside your Frai project:
+`spec/spec_helper.rb` is pre-generated:
 
 ```ruby
 # spec/spec_helper.rb
@@ -803,23 +808,20 @@ end
 
 ### Running specs
 
-Specs run via frai's own bundle — the host project is not involved:
-
 ```bash
-cd /path/to/frai
-bundle exec rspec /path/to/my_project/spec/
+bundle exec rspec
 ```
 
 Run a single file:
 
 ```bash
-bundle exec rspec /path/to/my_project/spec/tasks/code_review_spec.rb
+bundle exec rspec spec/tasks/code_review_spec.rb
 ```
 
 Run a single example by line number:
 
 ```bash
-bundle exec rspec /path/to/my_project/spec/tasks/code_review_spec.rb:12
+bundle exec rspec spec/tasks/code_review_spec.rb:12
 ```
 
 ### Testing a task
@@ -831,10 +833,9 @@ require "spec_helper"
 
 RSpec.describe CodeReview::Task do
   it "renders the prompt with given params", :aggregate_failures do
-    result = described_class.call(task_id: "PDB-123", language: "english")
+    result = described_class.call(task_id: "PDB-123")
 
     expect(result).to include("PDB-123")
-    expect(result).to include("english")
   end
 
   it "raises on missing required param" do

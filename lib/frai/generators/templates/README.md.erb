@@ -1,6 +1,6 @@
-# <%= @project_name %>
+# Frai
 
-Built with [Frai](https://github.com/aasmolsky/frai) — Ruby LLM framework.
+**Frai** is a Ruby framework for building LLM-powered tasks, pipelines, and agents.
 
 Ruby is an expressive language built for developer happiness — but it rarely appears in AI tooling, where Python dominates. Frai brings Rails-style conventions to LLM workflows: clear structure, sensible defaults, and a simple contract that scales from a single prompt to a multi-agent system.
 
@@ -8,21 +8,72 @@ Requires Ruby >= 3.3.0.
 
 ---
 
+## Installation
+
+Install the gem globally:
+
+```bash
+gem install frai
+```
+
+Or add to your Gemfile:
+
+```ruby
+gem "frai"
+```
+
+```bash
+bundle install
+```
+
+### Using frai in a Rails or host project
+
+If you're integrating frai into an existing Ruby project (Rails, Sinatra, etc.):
+
+**Option 1: Global installation** (recommended)
+```bash
+gem install frai
+frai new my_project
+```
+Then require the project in your Rails config:
+```ruby
+# config/initializers/frai.rb
+require_relative "../../path/to/my_project/config/frai"
+```
+
+**Option 2: Via Gemfile of a host project (Rails, etc.)**
+
+If frai runs inside an existing Ruby/Rails project that uses Bundler, add it to that project's Gemfile:
+```ruby
+# Gemfile of the Rails/host project
+gem "frai"
+```
+```bash
+bundle install
+bundle exec frai c          # console — only needed in bundler context
+bundle exec frai e TaskName # exec  — only needed in bundler context
+```
+
+**Key point:** A standalone frai project (created with `frai new`) does **not** have `gem "frai"` in its Gemfile — frai must already be installed globally. The generated Gemfile only contains `rspec`.
+
+---
+
 ## Getting started
 
 ```bash
+frai new <%= @project_name %>
 cd <%= @project_name %>
-bundle install
-cp .env.example .env    # fill in your secrets
-frai setup              # register MCP servers with Claude CLI
-frai gt analyze_item    # generate your first task
+bundle install              # installs rspec
+cp .env.example .env        # fill in your secrets
+frai setup                  # register MCP servers with Claude CLI
+frai gt analyze_item        # generate your first task
 ```
 
 **Generated structure:**
 
 ```
 <%= @project_name %>/
-  Gemfile                # frai + rspec
+  Gemfile                # rspec
   .rspec
   tasks/
     base_task.rb
@@ -36,8 +87,8 @@ frai gt analyze_item    # generate your first task
   agents/
     base_agent.rb
   applications/            # public entrypoints for external callers
-  scripts/                 # shared scripts in any language (Python, JS, bash...)
-  directives/              # shared prompt templates (reused across tasks)
+  scripts/                 # shared scripts
+  directives/              # shared prompt templates
     base.md.erb
   mcp/                     # external MCP server definitions
   config/
@@ -169,7 +220,7 @@ All task declarations live inside `schema do ... end`:
 |---------|-------------|
 | `llm false` | Skip the LLM call — return the rendered prompt as a string. Default: `true` |
 | `mcp :name` | Declare an MCP server dependency. Server must exist in `mcp/name.rb` |
-| `const :name, value` | Define a constant available in directives as `<%%= name %>` |
+| `const :name, value` | Define a constant available in directives as `<%= name %>` |
 | `param :name, type: T, required: true` | Declare a required input parameter |
 | `param :name, type: T, default: val` | Declare an optional input parameter with default |
 | `use :name` | Include a sub-directive (`directives/name.md.erb`) |
@@ -194,15 +245,15 @@ end
 2. Script runs, receives `{ input: task_id }` as JSON on stdin
 3. Script returns JSON like `{ "diff": "... code diff ..." }`
 4. Frai captures the `:diff` field and exposes it in the directive as `diff` method
-5. Template can use `<%%= diff %>`
+5. Template can use `<%= diff %>`
 
 **In the directive:**
 
 ```erb
-<%% run(:fetch_diff).with(:task_id).and_return(:diff) %>
+<% run(:fetch_diff).with(:task_id).and_return(:diff) %>
 
 Review this code:
-<%%= diff %>
+<%= diff %>
 ```
 
 - `.with(:task_id)` — pass the `task_id` param to the script
@@ -313,47 +364,47 @@ Directives are Markdown + ERB prompt templates. `main.md.erb` is always the entr
 You are a code reviewer.
 Review this code:
 
-<%%= diff %>
+<%= diff %>
 
 Use these guidelines:
-<%%= guidelines %>
+<%= guidelines %>
 ```
 
 **Run a script** — capture result into a variable:
 
 ```erb
-<%% run(:fetch_diff).with(:task_id).and_return(:diff) %>
+<% run(:fetch_diff).with(:task_id).and_return(:diff) %>
 
 Code changes:
-<%%= diff %>
+<%= diff %>
 ```
 
 **Use a sub-directive** — inline rendering:
 
 ```erb
-<%%= use(:summary).with(:analysis_result) %>
+<%= use(:summary).with(:analysis_result) %>
 ```
 
 **Use a sub-directive** — capture into variable:
 
 ```erb
-<%% use(:security_check).with(:diff).and_return(:security_issues) %>
+<% use(:security_check).with(:diff).and_return(:security_issues) %>
 
 Security findings:
-<%%= security_issues %>
+<%= security_issues %>
 ```
 
 **Conditional logic**:
 
 ```erb
-<%% use(:analyze_diff).with(:diff).and_return(:result) %>
+<% use(:analyze_diff).with(:diff).and_return(:result) %>
 
-<%% if result.include?("critical") %>
+<% if result.include?("critical") %>
   ALERT: Critical issues found!
-  <%%= use(:escalate_summary).with(:result) %>
-<%% else %>
+  <%= use(:escalate_summary).with(:result) %>
+<% else %>
   Code is OK
-<%% end %>
+<% end %>
 ```
 
 ### Key points
@@ -464,7 +515,7 @@ end
 **Step 3** — register with Claude CLI:
 
 ```bash
-frai setup
+frai setup   # or: frai s
 ```
 
 ### OAuth HTTP MCP servers
@@ -564,7 +615,7 @@ Since it's plain Ruby, Rails can call the application class directly:
 
 ```ruby
 # config/initializers/frai.rb
-require Rails.root.join("lib/<%= @project_name %>/config/frai")
+require Rails.root.join("lib/my_frai_project/config/frai")
 
 # app/services/analysis_service.rb
 result = Application.call(reviews: reviews, language: "english")
@@ -734,11 +785,11 @@ Error: MCP :database OAuth failed — token expired
 
 ## Testing with RSpec
 
-This project includes a ready-to-run `spec/` folder, a `Gemfile`, and a `.rspec` file out of the box. You can add your own specs here to test tasks, scripts, pipelines, applications, and agents.
+Frai projects include a `spec/` folder with a conventions spec out of the box. You can add your own specs there to test tasks, scripts, pipelines, and applications.
 
 ### Setup
 
-No extra configuration needed. The project already includes `rspec` in its Gemfile, and `.rspec` loads `spec_helper` automatically.
+Generated projects include `rspec` in their own `Gemfile` and a pre-generated `spec/spec_helper.rb`. No extra configuration needed — just run `bundle exec rspec` from the project root.
 
 `spec/spec_helper.rb` is pre-generated:
 
@@ -776,25 +827,24 @@ bundle exec rspec spec/tasks/code_review_spec.rb:12
 ### Testing a task
 
 ```ruby
-# spec/tasks/analyze_item_spec.rb
+# spec/tasks/code_review_spec.rb
 # frozen_string_literal: true
 require "spec_helper"
 
-RSpec.describe AnalyzeItem::Task do
+RSpec.describe CodeReview::Task do
   it "renders the prompt with given params", :aggregate_failures do
-    result = described_class.call(query: "test input", lang: "en")
+    result = described_class.call(task_id: "PDB-123")
 
-    expect(result).to include("test input")
-    expect(result).to include("en")
+    expect(result).to include("PDB-123")
   end
 
   it "raises on missing required param" do
-    expect { described_class.call(lang: "en") }
-      .to raise_error(Frai::MissingParam, /query/)
+    expect { described_class.call(language: "english") }
+      .to raise_error(Frai::MissingParam, /task_id/)
   end
 
   it "raises on wrong param type" do
-    expect { described_class.call(query: 123) }
+    expect { described_class.call(task_id: 123) }
       .to raise_error(Frai::InvalidParam, /expected String/)
   end
 end
@@ -843,7 +893,7 @@ Scripts are subprocesses that read JSON from stdin and write JSON to stdout — 
 require "json"
 require "open3"
 
-SCRIPT_PATH = File.expand_path("../tasks/analyze_item/scripts/fetch_data.rb", __dir__)
+SCRIPT_PATH = File.expand_path("../tasks/code_review/scripts/fetch_data.rb", __dir__)
 
 def run_script(payload)
   stdout, stderr, status = Open3.capture3("ruby", SCRIPT_PATH, stdin_data: JSON.generate(payload))
@@ -853,11 +903,11 @@ def run_script(payload)
 end
 
 RSpec.describe "fetch_data script" do
-  subject(:result) { run_script({ input: "test" }) }
+  subject(:result) { run_script({ input: "PDB-123" }) }
 
   it "returns expected keys", :aggregate_failures do
-    expect(result).to have_key(:data)
-    expect(result[:data]).not_to be_empty
+    expect(result).to have_key(:diff)
+    expect(result[:diff]).to include("PDB-123")
   end
 end
 ```
@@ -871,8 +921,9 @@ Scripts can be written in any language (Ruby, Python, bash) — the spec only ca
 | LLM calls | Skipped — `FRAI_ENV=test` uses the Null adapter, returns rendered prompt |
 | MCP servers | Skipped entirely in test/development |
 | Scripts | Run as real subprocesses (they are standalone executables) |
-| `rspec` availability | Included in this project's Gemfile — `bundle exec rspec` works out of the box |
+| `rspec` availability | Dev dependency of frai — no changes to the host project's Gemfile needed |
 | `Frai.reset!` | Resets configuration between tests — prevents state leakage |
+
 
 ---
 
@@ -880,6 +931,7 @@ Scripts can be written in any language (Ruby, Python, bash) — the spec only ca
 
 | Command | Description |
 |---|---|
+| `frai new PROJECT_NAME` | Create a new project (`frai n`) |
 | `frai generate task NAME` | Generate a task + Claude CLI command (`frai gt`) |
 | `frai generate pipeline NAME` | Generate a pipeline (`frai gp`) |
 | `frai generate agent NAME` | Generate an agent (`frai ga`) |
