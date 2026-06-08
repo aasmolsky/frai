@@ -19,12 +19,10 @@ module Frai
   #           use :formatting_rules
   #         end
   #
-  #         run :analyze_diff do
-  #           input   String
-  #           returns do
-  #             metrics String
-  #           end
-  #         end
+      #         run :analyze_diff do
+      #           input type: String
+      #           returns :metrics, type: String
+      #         end
   #       end
   #     end
   #   end

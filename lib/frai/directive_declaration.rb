@@ -12,16 +12,12 @@ module Frai
   #
   #     use :sum do
   #       run :parse_numbers do
-  #         input   String
-  #         returns do
-  #           parsed_numbers [Integer]
-  #         end
+  #         input   type: String
+  #         returns :parsed_numbers, type: [Integer]
   #       end
   #       run :sum_numbers do
-  #         input   [Integer]
-  #         returns do
-  #           calculated_sum Integer
-  #         end
+  #         input   type: [Integer]
+  #         returns :calculated_sum, type: Integer
   #       end
   #     end
   #
@@ -41,21 +37,39 @@ module Frai
         @type_resolver  = type_resolver
       end
 
-      # @param type [Class, Array] expected Ruby type of the input
-      def input(type)
-        @input_type = normalize_value(type)
+      # Supports both old and new DSL:
+      #   input String                    (old DSL — deprecated)
+      #   input type: String              (new DSL — explicit)
+      def input(type_or_name = nil, type: nil, **_kwargs)
+        if type
+          # New DSL: input type: Hash or input :name, type: String
+          @input_type = normalize_value(type)
+        elsif type_or_name.nil?
+          raise ArgumentError, "input requires either positional type argument or type: keyword"
+        else
+          # Old DSL: input String (still works for backwards compat)
+          @input_type = normalize_value(type_or_name)
+        end
       end
 
-      # @param schema [Hash] expected return schema e.g. { parsed_numbers: [Integer] }
-      def returns(schema = nil, &block)
-        if block_given?
-          raise ArgumentError, "returns accepts either a hash or a block, not both" unless schema.nil?
-
+      # Supports multiple DSL styles:
+      #   returns data: String                      (old hash DSL)
+      #   returns do; data String; end              (old block DSL)
+      #   returns :report, type: Hash               (new DSL)
+      def returns(schema_or_name = nil, type: nil, &block)
+        if type
+          # New DSL: returns :report, type: Hash
+          raise ArgumentError, "returns with type: keyword requires the first arg to be a symbol" unless schema_or_name.is_a?(Symbol)
+          @returns_schema = { schema_or_name.to_sym => normalize_value(type) }
+        elsif block_given?
+          # Block DSL: returns do ... end
+          raise ArgumentError, "returns block cannot be used with hash argument" unless schema_or_name.nil?
           builder = ReturnsDeclaration.new(type_resolver: @type_resolver)
           builder.instance_eval(&block)
           @returns_schema = builder.to_h
         else
-          @returns_schema = normalize_value(schema) || {}
+          # Hash DSL: returns data: String
+          @returns_schema = normalize_value(schema_or_name) || {}
         end
       end
 

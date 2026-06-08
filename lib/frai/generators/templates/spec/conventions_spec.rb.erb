@@ -8,18 +8,22 @@ RSpec.describe "Project conventions" do
   end
 
   def task_constant_name(file)
-    relative = file.sub(%r{\A.*?/tasks/}, "").sub(/\.rb\z/, "")
-    parts = relative.split(File::SEPARATOR)
-    namespace = parts[0...-1].map { |part| camelize(part) }
-    ([*namespace, camelize(parts.last)]).join("::")
+    # Tasks are in module X; class Task format
+    # e.g., tasks/code_review/task.rb => CodeReview::Task
+    task_dir = File.basename(File.dirname(file))
+    "#{camelize(task_dir)}::Task"
   end
 
   def simple_constant_name(file)
+    # Pipelines and agents use simple CamelCase
+    # e.g., pipelines/review_pipeline.rb => ReviewPipeline
     camelize(File.basename(file, ".rb"))
   end
 
   describe "tasks" do
-    Dir[File.join(__dir__, "..", "tasks", "**", "*.rb")].each do |file|
+    Dir[File.join(__dir__, "..", "tasks", "**", "*.rb")]
+      .reject { |file| file.include?("/scripts/") }
+      .each do |file|
       require file
       next if File.basename(file) == "base_task.rb"
 

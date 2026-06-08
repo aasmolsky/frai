@@ -156,22 +156,13 @@ module CodeReview
 
       use :context do
         run :fetch_diff do
-          input String
-
-          returns do
-            diff String
-          end
+          input type: String
+          returns :diff, type: String
         end
       end
     end
   end
 end
-```
-
-For a single return field, shorthand is also supported:
-
-```ruby
-returns diff: String
 ```
 
 ### Skipping the LLM call
@@ -187,10 +178,8 @@ module BuildReport
       param :data, type: Hash, required: true
 
       run :process do
-        input Hash
-        returns do
-          report String
-        end
+        input type: Hash
+        returns :report, type: String
       end
     end
   end
