@@ -250,14 +250,14 @@ end
 **In the directive:**
 
 ```erb
-<% run(:fetch_diff).with(:task_id).and_return(:diff) %>
+% run(:fetch_diff, params: :task_id, return: :diff)
 
 Review this code:
 <%= diff %>
 ```
 
-- `.with(:task_id)` — pass the `task_id` param to the script
-- `.and_return(:diff)` — extract the `diff` field from script's JSON output
+- `params: :task_id` — pass the `task_id` param to the script
+- `return: :diff` — extract the `diff` field from script's JSON output
 
 ### Full example
 
@@ -373,7 +373,7 @@ Use these guidelines:
 **Run a script** — capture result into a variable:
 
 ```erb
-<% run(:fetch_diff).with(:task_id).and_return(:diff) %>
+% run(:fetch_diff, params: :task_id, return: :diff)
 
 Code changes:
 <%= diff %>
@@ -382,13 +382,13 @@ Code changes:
 **Use a sub-directive** — inline rendering:
 
 ```erb
-<%= use(:summary).with(:analysis_result) %>
+<%= use(:summary, params: :analysis_result) %>
 ```
 
 **Use a sub-directive** — capture into variable:
 
 ```erb
-<% use(:security_check).with(:diff).and_return(:security_issues) %>
+% use(:security_check, params: :diff, return: :security_issues)
 
 Security findings:
 <%= security_issues %>
@@ -397,23 +397,23 @@ Security findings:
 **Conditional logic**:
 
 ```erb
-<% use(:analyze_diff).with(:diff).and_return(:result) %>
+% use(:analyze_diff, params: :diff, return: :result)
 
-<% if result.include?("critical") %>
+% if result.include?("critical")
   ALERT: Critical issues found!
-  <%= use(:escalate_summary).with(:result) %>
-<% else %>
+  <%= use(:escalate_summary, params: :result) %>
+% else
   Code is OK
-<% end %>
+% end
 ```
 
 ### Key points
 
 | Concept | Syntax | Returns |
 |---------|--------|---------|
-| **Run script** | `run(:name).with(:param).and_return(:var)` | "" (no text output) |
-| **Inline sub-directive** | `<%= use(:name).with(:param) %>` | rendered text |
-| **Capture sub-directive** | `use(:name).with(:param).and_return(:var)` | "" (text in @var) |
+| **Run script** | `% run(:name, params: :param, return: :var)` | "" (no text output) |
+| **Inline sub-directive** | `<%= use(:name, params: :param) %>` | rendered text |
+| **Capture sub-directive** | `% use(:name, params: :param, return: :var)` | "" (text in @var) |
 | **Access variable** | `<%= var_name %>` | the value |
 | **Params / constants / results** | `<%= param %>` | available as methods |
 
