@@ -28,47 +28,110 @@ module Frai
   class DirectiveDeclaration
     # Declares a script's input type and return schema.
     class ScriptDeclaration
-      attr_reader :name, :input_type, :returns_schema
+      attr_reader :name, :input_type, :input_schema, :returns_schema, :returns_dry_schemas
 
       def initialize(name, type_resolver: nil)
-        @name           = name
-        @input_type     = nil
-        @returns_schema = {}
-        @type_resolver  = type_resolver
+        @name                = name
+        @input_type          = nil
+        @input_schema        = nil
+        @returns_schema      = {}
+        @returns_dry_schemas = {}
+        @type_resolver       = type_resolver
       end
 
-      # Supports both old and new DSL:
-      #   input String                    (old DSL — deprecated)
-      #   input type: String              (new DSL — explicit)
-      def input(type_or_name = nil, type: nil, **_kwargs)
-        if type
-          # New DSL: input type: Hash or input :name, type: String
-          @input_type = normalize_value(type)
+      # input type: Hash do             — Hash with dry-schema (required when type: Hash)
+      #   required(:key).filled(:type)
+      # end
+      # input type: String              — scalar type
+      # input validate: MySchema        — pre-defined dry-schema for Hash
+      def input(type_or_name = nil, type: nil, validate: nil, **_kwargs, &block)
+        raise ArgumentError, "input — cannot use both block and validate: together" if block_given? && validate
+
+        if block_given?
+          raise ArgumentError,
+            "input block requires explicit type: Hash:\n" \
+            "  input type: Hash do\n" \
+            "    required(:key).filled(:type)\n" \
+            "  end" unless type
+
+          resolved = normalize_value(type)
+          raise ArgumentError,
+            "input block is only supported for type: Hash, got #{resolved}" unless resolved == Hash
+
+          require "dry/schema"
+          @input_type   = Hash
+          @input_schema = Dry::Schema.define(&block)
+        elsif validate
+          @input_type   = Hash
+          @input_schema = validate
+        elsif type
+          resolved = normalize_value(type)
+          if resolved == Hash
+            raise ArgumentError,
+              "input type: Hash requires a schema block:\n" \
+              "  input type: Hash do\n" \
+              "    required(:key).filled(:type)\n" \
+              "  end"
+          end
+          @input_type = resolved
         elsif type_or_name.nil?
-          raise ArgumentError, "input requires either positional type argument or type: keyword"
+          raise ArgumentError, "input requires type: keyword"
         else
-          # Old DSL: input String (still works for backwards compat)
-          @input_type = normalize_value(type_or_name)
+          resolved = normalize_value(type_or_name)
+          if resolved == Hash
+            raise ArgumentError,
+              "input type: Hash requires a schema block:\n" \
+              "  input type: Hash do\n" \
+              "    required(:key).filled(:type)\n" \
+              "  end"
+          end
+          @input_type = resolved
         end
       end
 
-      # Supports multiple DSL styles:
-      #   returns data: String                      (old hash DSL)
-      #   returns do; data String; end              (old block DSL)
-      #   returns :report, type: Hash               (new DSL)
-      def returns(schema_or_name = nil, type: nil, &block)
-        if type
-          # New DSL: returns :report, type: Hash
-          raise ArgumentError, "returns with type: keyword requires the first arg to be a symbol" unless schema_or_name.is_a?(Symbol)
-          @returns_schema = { schema_or_name.to_sym => normalize_value(type) }
+      # returns :name, type: Hash do    — Hash return with dry-schema (required when type: Hash)
+      #   required(:key).filled(:type)
+      # end
+      # returns :name, type: String     — scalar return type
+      # returns :name, validate: Schema — pre-defined dry-schema for Hash return
+      def returns(schema_or_name = nil, type: nil, validate: nil, &block)
+        raise ArgumentError, "returns — cannot use both block and validate: together" if block_given? && validate
+
+        if block_given? && schema_or_name.is_a?(Symbol)
+          raise ArgumentError,
+            "returns :#{schema_or_name} block requires explicit type: Hash:\n" \
+            "  returns :#{schema_or_name}, type: Hash do\n" \
+            "    required(:key).filled(:type)\n" \
+            "  end" unless type
+
+          resolved = normalize_value(type)
+          raise ArgumentError,
+            "returns block is only supported for type: Hash, got #{resolved}" unless resolved == Hash
+
+          require "dry/schema"
+          dry_schema = Dry::Schema.define(&block)
+          @returns_schema[schema_or_name.to_sym]      = Hash
+          @returns_dry_schemas[schema_or_name.to_sym] = dry_schema
+        elsif validate && schema_or_name.is_a?(Symbol)
+          @returns_schema[schema_or_name.to_sym]      = Hash
+          @returns_dry_schemas[schema_or_name.to_sym] = validate
+        elsif type
+          raise ArgumentError, "returns with type: requires a symbol as first arg" unless schema_or_name.is_a?(Symbol)
+          resolved = normalize_value(type)
+          if resolved == Hash
+            raise ArgumentError,
+              "returns :#{schema_or_name}, type: Hash requires a schema block:\n" \
+              "  returns :#{schema_or_name}, type: Hash do\n" \
+              "    required(:key).filled(:type)\n" \
+              "  end"
+          end
+          @returns_schema[schema_or_name.to_sym] = resolved
         elsif block_given?
-          # Block DSL: returns do ... end
-          raise ArgumentError, "returns block cannot be used with hash argument" unless schema_or_name.nil?
+          raise ArgumentError, "returns block cannot be used with a hash argument" unless schema_or_name.nil?
           builder = ReturnsDeclaration.new(type_resolver: @type_resolver)
           builder.instance_eval(&block)
           @returns_schema = builder.to_h
         else
-          # Hash DSL: returns data: String
           @returns_schema = normalize_value(schema_or_name) || {}
         end
       end
@@ -185,6 +248,13 @@ module Frai
     # Returns all script names recursively.
     def all_script_names
       script_declarations.keys + sub_directives.values.flat_map(&:all_script_names)
+    end
+
+    # Returns flat hash of all script declarations across the tree: { name => ScriptDeclaration }
+    def all_script_declarations
+      sub_directives.values.each_with_object(script_declarations.dup) do |sub, memo|
+        memo.merge!(sub.all_script_declarations)
+      end
     end
   end
 end

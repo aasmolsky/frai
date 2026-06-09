@@ -20,7 +20,8 @@ Gem::Specification.new do |spec|
   spec.add_dependency "thor",         "~> 1.3"
   spec.add_dependency "ruby_llm",     "~> 1.0"
   spec.add_dependency "ruby_llm-mcp", "~> 1.0"
+  spec.add_dependency "dry-schema",   "~> 1.13"
+  spec.add_dependency "rspec",        "~> 3.13"
 
-  spec.add_development_dependency "yard",  "~> 0.9"
-  spec.add_development_dependency "rspec", "~> 3.13"
+  spec.add_development_dependency "yard", "~> 0.9"
 end

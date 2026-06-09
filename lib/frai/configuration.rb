@@ -27,11 +27,16 @@ module Frai
     # Root directory of the current project (auto-detected).
     attr_accessor :project_root
 
+    # Default number of retries after a validation error (0 = one attempt, no retries).
+    # Can be overridden per task: output OutputSchema, retries: 2
+    attr_accessor :default_retries
+
     def initialize
-      @model        = nil
-      @api_key      = nil
-      @env          = (ENV["FRAI_ENV"] || "production").to_sym
-      @project_root = Dir.pwd
+      @model           = nil
+      @api_key         = nil
+      @env             = (ENV["FRAI_ENV"] || "production").to_sym
+      @project_root    = Dir.pwd
+      @default_retries = 0
     end
 
     def development?

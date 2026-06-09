@@ -17,6 +17,12 @@ module Frai
       @cache        = {}
     end
 
+    # All script results collected so far, keyed by script name.
+    # @return [Hash{Symbol => Hash}]
+    def results
+      @cache
+    end
+
     # Runs a script by name with the given input value.
     # Memoized per runner instance — same script called twice returns cached result.
     #

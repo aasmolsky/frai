@@ -12,17 +12,21 @@ module Frai
 
       # @param prompt [String] rendered prompt
       # @param mcp_servers [Array<Frai::MCP::ServerDefinition>] MCP server definitions
-      # @return [String] LLM response
-      def complete(prompt, mcp_servers: [])
+      # @param schema [Class, nil] RubyLLM::Schema class for structured output
+      # @return [String, Hash] LLM response — Hash when schema is set
+      def complete(prompt, mcp_servers: [], schema: nil)
         require "ruby_llm/mcp"
 
         chat    = RubyLLM.chat(model: @model)
         clients = attach_mcp_servers(chat, mcp_servers)
+        chat    = chat.with_schema(schema) if schema
         result  = chat.ask(prompt).content
         clients.each { |c| c.stop rescue nil }
         result
       rescue LoadError
-        RubyLLM.chat(model: @model).ask(prompt).content
+        chat = RubyLLM.chat(model: @model)
+        chat = chat.with_schema(schema) if schema
+        chat.ask(prompt).content
       end
 
       private

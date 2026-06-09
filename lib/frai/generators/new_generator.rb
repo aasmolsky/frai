@@ -47,7 +47,6 @@ module Frai
 
       def copy_templates
         templates = {
-          "Gemfile.erb"                  => "Gemfile",
           ".rspec.erb"                   => ".rspec",
           "directives/base.md.erb.erb"    => "directives/base.md.erb",
           "tasks/base_task.rb.erb"               => "tasks/base_task.rb",

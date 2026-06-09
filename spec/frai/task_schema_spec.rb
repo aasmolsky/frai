@@ -34,6 +34,8 @@ RSpec.describe "Frai schema task loading" do
                   input   type: String
                   returns :diff_value, type: String
                 end
+
+                output :text
               end
             end
           end
@@ -52,6 +54,8 @@ RSpec.describe "Frai schema task loading" do
                   input   type: [Integer]
                   returns :total, type: Integer
                 end
+
+                output :text
               end
             end
           end

@@ -30,16 +30,23 @@ module Frai
   #   CodeReview::Task.call(task_id: "PDB-111")
   class Task
     class SchemaBuilder
-      attr_reader :mcps, :constants, :llm_enabled
+      attr_reader :mcps, :constants, :llm_enabled, :output_kind, :output_schema, :output_validator,
+                  :output_validate_method, :output_retries, :output_strict
 
       def initialize(task_name)
-        @task_name   = task_name
-        @mcps        = []
-        @constants   = {}
-        @params      = ParamsDeclaration.new
-        @runs        = []
-        @uses        = []
-        @llm_enabled = true
+        @task_name         = task_name
+        @mcps              = []
+        @constants         = {}
+        @params            = ParamsDeclaration.new
+        @runs              = []
+        @uses              = []
+        @llm_enabled       = true
+        @output_kind       = nil
+        @output_schema           = nil
+        @output_validator        = nil
+        @output_validate_method  = nil
+        @output_retries          = nil
+        @output_strict     = true
       end
 
       # Declare whether this task calls the LLM.
@@ -56,14 +63,36 @@ module Frai
         @constants[name.to_sym] = value
       end
 
-      def param(name, positional_type = nil, type: nil, required: true, default: nil)
+      def param(name, positional_type = nil, type: nil, required: true, default: nil, validate: nil, &block)
         actual_type   = positional_type || type || String
         resolved_type = resolve_type(actual_type)
 
+        raise ArgumentError,
+          "param :#{name} — cannot use both block and validate: together" if block_given? && validate
+
+        schema = validate
+
+        if block_given?
+          unless resolved_type == Hash
+            raise ArgumentError,
+              "param :#{name} — key schema block is only allowed for type: Hash, got #{resolved_type}"
+          end
+          require "dry/schema"
+          schema = Dry::Schema.define(&block)
+        elsif resolved_type == Hash && validate.nil?
+          raise ArgumentError,
+            "param :#{name} has type: Hash — declare its schema:\n" \
+            "  param :#{name}, type: Hash do\n" \
+            "    required(:key_name).filled(:string)\n" \
+            "  end\n" \
+            "Or pass a dry-schema contract:\n" \
+            "  param :#{name}, type: Hash, validate: MySchema"
+        end
+
         if required && default.nil?
-          @params.required(name.to_sym, resolved_type)
+          @params.required(name.to_sym, resolved_type, schema: schema)
         else
-          @params.optional(name.to_sym, resolved_type, default: default)
+          @params.optional(name.to_sym, resolved_type, default: default, schema: schema)
         end
       end
 
@@ -77,6 +106,56 @@ module Frai
         @runs << [name.to_sym, input, returns, block]
       end
 
+      # Declare task output contract — required for every task.
+      #
+      # @param target [Class, :text] RubyLLM::Schema subclass for structured Hash, or `:text` for String
+      # @param retries [Integer] how many times to re-ask the LLM after validation errors
+      # @param validate [Symbol, nil] instance method to call as `validate!(output, input)` alternative to block
+      # @yield [data, params] optional business-rule validation — runs on the task instance when given
+      # @param strict [Boolean] strict JSON parsing — no trailing-comma repair (default: true, schema only)
+      def output(target, retries: nil, strict: true, validate: nil, &block)
+        if @output_kind
+          raise Frai::Error, "output already declared for #{@task_name}"
+        end
+
+        if validate && block
+          raise Frai::Error, "output accepts validate: or a block, not both"
+        end
+
+        @output_retries          = retries
+        @output_validator        = block
+        @output_validate_method  = validate&.to_sym
+
+        if target == :text
+          @output_kind = :text
+          return
+        end
+
+        if target == Hash
+          @output_kind   = :hash
+          @output_strict = strict
+          return
+        end
+
+        require "ruby_llm/schema"
+
+        unless target.is_a?(Class) && target < RubyLLM::Schema
+          raise Frai::Error,
+            "output requires :text, Hash, or a RubyLLM::Schema class, got #{target.inspect}"
+        end
+
+        @output_kind     = :schema
+        @output_schema   = target
+        @output_strict   = strict
+      end
+
+      def validate!
+        return if @output_kind
+
+        raise Frai::MissingOutput,
+          "#{@task_name} must declare output :text, output Hash, or output YourSchema"
+      end
+
       def build_directive(name = :main)
         decl = DirectiveDeclaration.new(name)
         apply_to(decl)
@@ -88,11 +167,11 @@ module Frai
           params_snapshot = @params
           decl.params do
             params_snapshot.required_params.each do |param_name, type|
-              required(param_name, type)
+              required(param_name, type, schema: params_snapshot.param_schemas[param_name])
             end
 
             params_snapshot.optional_params.each do |param_name, opts|
-              optional(param_name, opts[:type], default: opts[:default])
+              optional(param_name, opts[:type], default: opts[:default], schema: params_snapshot.param_schemas[param_name])
             end
           end
         end
@@ -143,10 +222,17 @@ module Frai
       def schema(&block)
         builder = SchemaBuilder.new(task_name)
         builder.instance_eval(&block)
+        builder.validate!
 
         @_mcps                  = builder.mcps
         @_constants             = builder.constants
         @_llm_enabled           = builder.llm_enabled
+        @_output_kind           = builder.output_kind
+        @_output_schema         = builder.output_schema
+        @_output_validator       = builder.output_validator
+        @_output_validate_method = builder.output_validate_method
+        @_output_retries         = builder.output_retries
+        @_output_strict         = builder.output_strict
         @_directive_declaration = builder.build_directive(:main)
       end
 
@@ -188,6 +274,35 @@ module Frai
         @_directive_declaration
       end
 
+      # @return [Class, nil]
+      def _output_schema
+        @_output_schema
+      end
+
+      # @return [Proc, nil]
+      def _output_validator
+        @_output_validator
+      end
+
+      # @return [Symbol, nil]
+      def _output_validate_method
+        @_output_validate_method
+      end
+
+      # @return [Integer]
+      def _output_retries
+        @_output_retries.nil? ? Frai.configuration.default_retries.to_i : @_output_retries
+      end
+
+      def _output_strict
+        @_output_strict.nil? ? true : @_output_strict
+      end
+
+      # @return [Symbol, nil] :schema, :text, or nil when llm is disabled
+      def _output_kind
+        @_output_kind
+      end
+
       # @param input [Hash, String, nil]
       # @return [Object]
       def call(input = nil)
@@ -215,7 +330,10 @@ module Frai
     # Executes the full task pipeline.
     #
     # @param input [Hash, String, nil]
-    # @return [String] LLM response
+    # @return [String, Hash]
+    #   - rendered prompt when llm false + output :text, or when llm true + non-production
+    #   - Hash when output Schema or output Hash
+    #   - String when output :text
     def call(input = nil)
       decl = self.class._directive_declaration
 
@@ -227,11 +345,12 @@ module Frai
         self.class.task_name,
         Frai.configuration.project_root,
         script_runner,
-        self.class._constants
+        self.class._constants,
+        self.class._directive_declaration
       )
 
       if Frai.configuration.non_production?
-        warn "Frai [#{Frai.configuration.env}]: all MCPs skipped, LLM not called, returning rendered prompt."
+        warn "Frai [#{Frai.configuration.env}]: all MCPs skipped, LLM not called."
         mcp_servers = []
       else
         mcp_servers = declared_mcp_servers
@@ -239,13 +358,194 @@ module Frai
       end
 
       prompt = renderer.render(decl, input)
+      @_script_results = script_runner.results
 
-      return prompt unless self.class._llm_enabled
+      # llm false: no LLM call; output Hash parses the rendered directive, output :text returns it as-is
+      unless self.class._llm_enabled
+        return parse_rendered_as_hash(prompt, input) if self.class._output_kind == :hash
+        return prompt
+      end
 
-      adapter.complete(prompt, mcp_servers: mcp_servers)
+      # llm true, non-production: return rendered prompt for inspection
+      # In test, mock the task via allow(...).to receive(:call) if you need a Hash
+      return prompt if Frai.configuration.non_production?
+
+      case self.class._output_kind
+      when :schema
+        complete_with_json_output(prompt, mcp_servers, input)
+      when :hash
+        complete_with_hash_output(prompt, mcp_servers, input)
+      when :text
+        complete_with_text_output(prompt, mcp_servers, input)
+      end
+    end
+
+    # Returns all script results collected during directive rendering.
+    # Available in overridden +call+ after +super+.
+    # Scripts run in every environment — results are populated whenever
+    # the directive template calls <tt>run(:name, ...)</tt>.
+    #
+    # Returns +{}+ only if the directive template doesn't call any scripts.
+    #
+    # @example
+    #   def call(input)
+    #     llm_result = super
+    #     [script_results[:parse_input], llm_result]
+    #   end
+    #
+    # @return [Hash{Symbol => Hash}]
+    def script_results
+      @_script_results || {}
     end
 
     private
+
+    def complete_with_json_output(prompt, mcp_servers, input)
+      attempts   = self.class._output_retries + 1
+      last_error = nil
+      last_raw   = nil
+
+      attempts.times do |index|
+        attempt_num    = index + 1
+        current_prompt = index.zero? ? prompt : retry_prompt(prompt, last_error)
+
+        last_raw = adapter.complete(
+          current_prompt,
+          mcp_servers: mcp_servers,
+          schema:      self.class._output_schema
+        )
+
+        return Frai::JsonResponse.normalize(
+          last_raw,
+          validate:           output_validation,
+          validator_receiver: output_validation ? self : nil,
+          context:            input,
+          strict:             self.class._output_strict,
+          attempt:            attempt_num,
+          task_class:         self.class
+        )
+      rescue Frai::JsonParseError, Frai::ValidationError => e
+        last_error = e
+        if index == attempts - 1
+          raise Frai::OutputRetriesExhaustedError.new(
+            e,
+            attempts:   attempts,
+            task_class: self.class,
+            raw:        last_raw
+          )
+        end
+      end
+    end
+
+    def complete_with_hash_output(prompt, mcp_servers, input)
+      attempts   = self.class._output_retries + 1
+      last_error = nil
+      last_raw   = nil
+
+      attempts.times do |index|
+        attempt_num    = index + 1
+        current_prompt = index.zero? ? prompt : retry_prompt(prompt, last_error)
+
+        last_raw = adapter.complete(current_prompt, mcp_servers: mcp_servers)
+
+        return Frai::JsonResponse.normalize(
+          last_raw,
+          validate:           output_validation,
+          validator_receiver: output_validation ? self : nil,
+          context:            input,
+          strict:             self.class._output_strict,
+          attempt:            attempt_num,
+          task_class:         self.class
+        )
+      rescue Frai::JsonParseError, Frai::ValidationError => e
+        last_error = e
+        if index == attempts - 1
+          raise Frai::OutputRetriesExhaustedError.new(
+            e,
+            attempts:   attempts,
+            task_class: self.class,
+            raw:        last_raw
+          )
+        end
+      end
+    end
+
+    def parse_rendered_as_hash(rendered, input)
+      Frai::JsonResponse.normalize(
+        rendered,
+        validate:           output_validation,
+        validator_receiver: output_validation ? self : nil,
+        context:            input,
+        strict:             self.class._output_strict,
+        task_class:         self.class
+      )
+    rescue Frai::JsonParseError => e
+      raise Frai::OutputRetriesExhaustedError.new(
+        e, attempts: 1, task_class: self.class, raw: rendered
+      )
+    end
+
+    RETRY_MESSAGE_LIMIT = 300
+
+    def complete_with_text_output(prompt, mcp_servers, input)
+      attempts   = self.class._output_retries + 1
+      last_error = nil
+      last_raw   = nil
+
+      attempts.times do |index|
+        attempt_num    = index + 1
+        current_prompt = index.zero? ? prompt : retry_prompt(prompt, last_error, format: :text)
+
+        last_raw = adapter.complete(current_prompt, mcp_servers: mcp_servers)
+        text     = last_raw.to_s
+
+        run_output_validator!(text, input, attempt: attempt_num, raw: last_raw)
+        return text
+      rescue Frai::ValidationError => e
+        last_error = e
+        if index == attempts - 1
+          raise Frai::OutputRetriesExhaustedError.new(
+            e,
+            attempts:   attempts,
+            task_class: self.class,
+            raw:        last_raw
+          )
+        end
+      end
+    end
+
+    def output_validation
+      self.class._output_validate_method || self.class._output_validator
+    end
+
+    def run_output_validator!(value, input, attempt:, raw:)
+      validate = output_validation
+      return unless validate
+
+      Frai::JsonResponse.run_validator!(
+        validate,
+        value,
+        input,
+        raw:                raw,
+        attempt:            attempt,
+        task_class:         self.class,
+        validator_receiver: self
+      )
+    end
+
+    def retry_prompt(original, error, format: :schema)
+      message = error.message.to_s.strip
+      message = "#{message[0, RETRY_MESSAGE_LIMIT]}…" if message.length > RETRY_MESSAGE_LIMIT
+      fix_hint = format == :text ? "valid text matching the requirements" : "valid JSON matching the required schema"
+
+      <<~PROMPT.rstrip
+        #{original}
+
+        ---
+        Your previous response failed validation: #{message}
+        Fix the issues and return #{fix_hint}.
+      PROMPT
+    end
 
     def declared_mcp_servers
       self.class._mcps.map do |name|
