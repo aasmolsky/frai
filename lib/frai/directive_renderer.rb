@@ -79,10 +79,11 @@ module Frai
 
     # Handles script(:name).with(@input).and_return(:key, Type) chains.
     class ScriptCall
-      def initialize(runner, name, ctx)
+      def initialize(runner, name, ctx, decl = nil)
         @runner = runner
         @name   = name
         @ctx    = ctx
+        @decl   = decl
         @input  = nil
         @result = nil
       end
@@ -92,15 +93,16 @@ module Frai
         self
       end
 
-      # Runs script, extracts :key from JSON output, exposes on context.
-      # Type is declared in task.rb and validated there — do not pass it here.
+      # Runs script, extracts :key from JSON output, validates against dry-schema if declared.
       # Returns "" — no text output.
       def and_return(key, type = nil)
         result = execute!
         value  = result[key]
         validate_type!(value, type, key) if type
+        validate_output!(key, value)
         @ctx.instance_variable_set(:"@#{key}", value)
         @ctx.define_singleton_method(key) { instance_variable_get(:"@#{key}") }
+        @runner.store_return(key, value)
         ""
       end
 
@@ -111,7 +113,31 @@ module Frai
       private
 
       def execute!
-        @result ||= @runner.run(@name, @input)
+        return @result if @result
+        validate_input!
+        @result = @runner.run(@name, @input)
+      end
+
+      def validate_input!
+        schema = @decl&.input_schema
+        return unless schema&.respond_to?(:call)
+
+        result = schema.call(@input.is_a?(Hash) ? @input : { input: @input })
+        return if result.success?
+
+        raise Frai::InvalidParam,
+          "Script '#{@name}' input validation failed: #{result.errors.to_h}"
+      end
+
+      def validate_output!(key, value)
+        schema = @decl&.returns_dry_schemas&.[](key)
+        return unless schema&.respond_to?(:call)
+
+        result = schema.call(value.is_a?(Hash) ? value : { value: value })
+        return if result.success?
+
+        raise Frai::InvalidScriptOutput,
+          "Script '#{@name}' output :#{key} validation failed: #{result.errors.to_h}"
       end
 
       def validate_type!(value, type, key)
@@ -127,11 +153,13 @@ module Frai
     # @param project_root [String] absolute path to project root
     # @param script_runner [Frai::ScriptRunner]
     # @param constants [Hash] task-level constants — available as @name in all directives
-    def initialize(task_name, project_root, script_runner, constants = {})
+    # @param declaration [DirectiveDeclaration, nil] used for input/output schema validation
+    def initialize(task_name, project_root, script_runner, constants = {}, declaration = nil)
       @task_name     = task_name.to_s
       @project_root  = project_root
       @script_runner = script_runner
       @constants     = constants
+      @declaration   = declaration
     end
 
     # Renders the main directive and returns the final prompt string.
@@ -182,8 +210,9 @@ module Frai
     end
 
     def inject_helpers(ctx)
-      renderer = self
-      runner   = @script_runner
+      renderer    = self
+      runner      = @script_runner
+      declaration = @declaration
 
       ctx.define_singleton_method(:use) do |name, opts = nil|
         call = DirectiveRenderer::DirectiveCall.new(renderer, name.to_sym, self)
@@ -206,7 +235,8 @@ module Frai
       end
 
       ctx.define_singleton_method(:run) do |name, opts = nil|
-        call = DirectiveRenderer::ScriptCall.new(runner, name.to_sym, self)
+        script_decl = declaration&.all_script_declarations&.[](name.to_sym)
+        call = DirectiveRenderer::ScriptCall.new(runner, name.to_sym, self, script_decl)
         case opts
         when nil    then call
         when Symbol then call.with(opts)

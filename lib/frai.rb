@@ -9,6 +9,7 @@ require_relative "frai/directive_renderer"
 require_relative "frai/mcp"
 require_relative "frai/mcp_file_storage"
 require_relative "frai/adapters/null"
+require_relative "frai/json_response"
 # adapters/ruby_llm loaded lazily when model is configured
 require_relative "frai/task"
 require_relative "frai/pipeline"

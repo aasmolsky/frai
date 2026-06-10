@@ -18,6 +18,9 @@ module <%= @module_name %>
       #   input type: String
       #   returns :metrics, type: String
       # end
+
+      # output :text                    # plain String from LLM
+      # output YourOutputSchema         # structured Hash via ruby_llm with_schema
     end
   end
 end
