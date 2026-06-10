@@ -12,15 +12,28 @@ module Frai
   #   - Exit 0 on success, non-zero on failure
   class ScriptRunner
     def initialize(task_name, project_root)
-      @task_name    = task_name.to_s
-      @project_root = project_root
-      @cache        = {}
+      @task_name     = task_name.to_s
+      @project_root  = project_root
+      @cache         = {}
+      @return_values = {}
     end
 
     # All script results collected so far, keyed by script name.
     # @return [Hash{Symbol => Hash}]
     def results
       @cache
+    end
+
+    # All extracted return values, keyed by the return key declared in the directive.
+    # e.g. run(:prepare_data, return: :prepared_data) → { prepared_data: { ... } }
+    # @return [Hash{Symbol => Object}]
+    def return_values
+      @return_values
+    end
+
+    # Called by ScriptCall#and_return to register extracted values.
+    def store_return(key, value)
+      @return_values[key.to_sym] = value
     end
 
     # Runs a script by name with the given input value.

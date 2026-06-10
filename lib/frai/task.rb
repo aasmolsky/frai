@@ -358,7 +358,7 @@ module Frai
       end
 
       prompt = renderer.render(decl, input)
-      @_script_results = script_runner.results
+      @_script_results = script_runner.return_values
 
       # llm false: no LLM call; output Hash parses the rendered directive, output :text returns it as-is
       unless self.class._llm_enabled
@@ -380,20 +380,24 @@ module Frai
       end
     end
 
-    # Returns all script results collected during directive rendering.
+    # Returns extracted script return values, keyed by the return key declared in the directive.
     # Available in overridden +call+ after +super+.
-    # Scripts run in every environment — results are populated whenever
-    # the directive template calls <tt>run(:name, ...)</tt>.
+    #
+    #   % run(:prepare_data, params: :place_id, return: :prepared_data)
+    #
+    # gives you:
+    #
+    #   script_results[:prepared_data]  # => { place_id: ..., ... }
     #
     # Returns +{}+ only if the directive template doesn't call any scripts.
     #
     # @example
     #   def call(input)
     #     llm_result = super
-    #     [script_results[:parse_input], llm_result]
+    #     [script_results[:prepared_data], llm_result]
     #   end
     #
-    # @return [Hash{Symbol => Hash}]
+    # @return [Hash{Symbol => Object}]
     def script_results
       @_script_results || {}
     end

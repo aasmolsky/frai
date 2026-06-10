@@ -362,10 +362,13 @@ class Blacklist::Task < BaseTask
 
   def call(input)
     llm_result = super                          # renders prompt, runs scripts, calls LLM
-    [script_results[:parse_input], llm_result]  # script ran once, result is cached
+    parsed     = script_results[:prepared_data] # keyed by return: key declared in the directive
+    [parsed, llm_result]
   end
 end
 ```
+
+`script_results` is keyed by the **return key** declared in the directive — the same name you pass to `return:` in `% run(...)`. If the directive has `% run(:prepare_data, params: :place_id, return: :prepared_data)`, the value is already extracted: `script_results[:prepared_data]` gives you `{ place_id: ..., ... }` directly.
 
 `script_results` returns `{}` when no `run(...)` was called during directive rendering (e.g. the directive template doesn't reference the script).
 

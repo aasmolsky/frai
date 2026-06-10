@@ -102,6 +102,7 @@ module Frai
         validate_output!(key, value)
         @ctx.instance_variable_set(:"@#{key}", value)
         @ctx.define_singleton_method(key) { instance_variable_get(:"@#{key}") }
+        @runner.store_return(key, value)
         ""
       end
 
