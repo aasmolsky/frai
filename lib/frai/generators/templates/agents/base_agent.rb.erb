@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "frai"
 
 # BaseAgent is the parent class for all agents in this project.
@@ -5,18 +7,16 @@ require "frai"
 #
 #   frai generate agent my_agent_name
 #
-# An agent orchestrates tasks dynamically — it can branch, loop,
-# and decide what to call next based on intermediate results.
+# An agent uses RubyLLM's built-in tool-calling loop:
+# declare tools and instructions, the LLM decides what to call and when.
 #
 # Example:
-#   class ResearchAgent < BaseAgent
-#     def call(input)
-#       data    = FetchDataTask.call(input)
-#       summary = SummarizeTask.call(data)
-#       summary
-#     end
+#   class ReviewsAgent < BaseAgent
+#     tools FetchReviews, ParseReviews
+#
+#     instructions  # loads from agents/reviews/directives/instructions.md.erb
 #   end
 #
-#   ResearchAgent.call("topic to research")
+#   ReviewsAgent.call("Analyze place ChIJN1t_tDeuEmsRUsoyG83frY4")
 class BaseAgent < Frai::Agent
 end

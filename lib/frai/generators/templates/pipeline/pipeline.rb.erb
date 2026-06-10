@@ -1,17 +1,16 @@
+# frozen_string_literal: true
+
 # <%= @class_name %> is a Frai pipeline — a sequential chain of tasks.
 #
 # Add steps in order. The output of each step becomes the input for the next.
 # All steps must respond to .call(input).
 #
-# Example:
-#   step FetchDataTask
-#   step AnalyzeItemTask
-#   step FormatResultTask
-#
 # To run this pipeline:
 #   frai exec <%= @class_name %>
 #   frai exec <%= @class_name %> "your input here"
 class <%= @class_name %> < BasePipeline
-  # step SomeTask
-  # step AnotherTask
+  def call(input)
+    # result = StepOneTask.call(input)
+    # StepTwoTask.call(result)
+  end
 end

@@ -4,3 +4,6 @@ ENV["FRAI_ENV"] = "test"
 
 require_relative "../config/frai"
 
+RSpec.configure do |config|
+  config.after { Frai.reset! }
+end

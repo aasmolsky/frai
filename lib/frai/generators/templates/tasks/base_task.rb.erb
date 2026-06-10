@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "frai"
 
 # BaseTask is the parent class for all tasks in this project.

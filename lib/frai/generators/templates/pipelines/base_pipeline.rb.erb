@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "frai"
 
 # BasePipeline is the parent class for all pipelines in this project.
