@@ -79,15 +79,11 @@ my_project/
       task.rb                               # namespace + schema
       directives/
         main.md.erb                         # entry point
-      scripts/
   pipelines/
     base_pipeline.rb
   agents/
     base_agent.rb
   applications/            # public entrypoints for external callers
-  scripts/                 # shared scripts
-  directives/              # shared prompt templates
-    base.md.erb
   mcp/                     # external MCP server definitions
   config/
     frai.rb                # model, API key, autoload
@@ -901,9 +897,29 @@ The frai project lives in `lib/` and is loaded via the initializer. All classes 
 - Fast, predictable, easy to test
 
 ### Agent — dynamic decision
-- LLM decides which tools/tasks to call and when
+- LLM decides which tasks to call and when
 - Can loop, branch, and call tools multiple times
 - LLM is in the control loop
+
+---
+
+## Shared Directives
+
+By default, any directive files you write are scoped to their task (e.g. `tasks/code_review/directives/guidelines.md.erb`). 
+
+When you need to share a directive across multiple tasks, you can create a top-level `directives/` folder in your project root:
+
+```bash
+mkdir directives
+touch directives/guidelines.md.erb
+```
+
+Frai automatically discovers shared directives. Any task can now use it inside `schema do` and its templates:
+
+```erb
+# Inside your task's main.md.erb:
+<%= use :guidelines %>
+```
 
 ---
 
@@ -975,9 +991,6 @@ MCP servers:
   # Hosted database MCP with OAuth
   - database  HTTP/oauth
       https://mcp.example.com/servers/abc123/mcp
-
-Shared directives:
-  - base
 ```
 
 ### Adding descriptions

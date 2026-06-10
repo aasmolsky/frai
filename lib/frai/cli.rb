@@ -109,15 +109,6 @@ module Frai
         puts "  - #{s.name}  #{transport}#{auth}"
         puts "      #{location}"
       end
-
-      puts "\nShared directives:\n"
-      shared = Dir.glob(File.join(Frai.configuration.project_root, "directives", "*.md.erb"))
-      shared.each do |f|
-        name = File.basename(f, ".md.erb")
-        desc = read_directive_desc(Frai.configuration.project_root, nil, name) rescue nil
-        puts "  # #{desc}" if desc
-        puts "  - #{name}"
-      end
       puts
     end
 
