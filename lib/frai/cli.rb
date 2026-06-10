@@ -53,6 +53,28 @@ module Frai
       Frai::Generators::ProjectDestroyer.new.destroy
     end
 
+    desc "check", "Validate project structure, task contracts, and MCP configurations"
+    def check
+      load_project!
+      
+      errors = []
+      task_classes.each do |klass|
+        begin
+          Frai::StructureChecker.new(klass).check!
+        rescue Frai::Error => e
+          errors << e.message
+        end
+      end
+
+      if errors.empty?
+        puts "\n  \e[32m✓\e[0m Project is valid. All contracts, directives, scripts, and MCPs are configured correctly.\n\n"
+      else
+        puts "\n  \e[31m✗\e[0m Project validation failed:\n\n"
+        errors.each { |err| puts "    - #{err.gsub("\n", "\n      ")}" }
+        abort "\nFound #{errors.size} error(s)."
+      end
+    end
+
     desc "list", "List all tasks, MCP servers and shared directives in the project"
     def list
       load_project!

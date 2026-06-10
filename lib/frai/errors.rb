@@ -15,8 +15,14 @@ module Frai
   # Raised when a declared directive file does not exist on disk
   class MissingDirective < Error; end
 
+  # Raised when a directive is used in a template but not declared in task definition
+  class UndeclaredDirective < Error; end
+
   # Raised when a declared script file does not exist on disk
   class MissingScript < Error; end
+
+  # Raised when a script is executed in a template but not declared in task definition
+  class UndeclaredScript < Error; end
 
   # Raised when a task omits the required output declaration
   class MissingOutput < Error; end

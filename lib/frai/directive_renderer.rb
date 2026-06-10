@@ -215,6 +215,10 @@ module Frai
       declaration = @declaration
 
       ctx.define_singleton_method(:use) do |name, opts = nil|
+        if declaration && !declaration.all_directive_names.include?(name.to_sym)
+          raise Frai::UndeclaredDirective, "Cannot use(:#{name}) because it is not declared in the task schema via `use :#{name}`"
+        end
+
         call = DirectiveRenderer::DirectiveCall.new(renderer, name.to_sym, self)
         case opts
         when nil    then call
@@ -235,6 +239,10 @@ module Frai
       end
 
       ctx.define_singleton_method(:run) do |name, opts = nil|
+        if declaration && !declaration.all_script_names.include?(name.to_sym)
+          raise Frai::UndeclaredScript, "Cannot run(:#{name}) because it is not declared in the task schema via `run :#{name}`"
+        end
+
         script_decl = declaration&.all_script_declarations&.[](name.to_sym)
         call = DirectiveRenderer::ScriptCall.new(runner, name.to_sym, self, script_decl)
         case opts

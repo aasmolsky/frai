@@ -140,7 +140,43 @@ RSpec.describe Frai::StructureChecker do
         end
       end
     end
+
+    context "when there is an orphan directive" do
+      before do
+        write_file("tasks/test/directives/main.md.erb")
+        write_file("tasks/test/directives/orphan.md.erb")
+        task_class.class_eval do
+          schema do
+            output :text
+          end
+        end
+      end
+
+      it "raises an Error indicating the directive is unused" do
+        expect { checker.check! }.to raise_error(
+          Frai::Error,
+          /Directive `orphan` exists in .* but is not declared/
+        )
+      end
+    end
+
+    context "when there is an orphan script" do
+      before do
+        write_file("tasks/test/directives/main.md.erb")
+        write_file("tasks/test/scripts/orphan.rb")
+        task_class.class_eval do
+          schema do
+            output :text
+          end
+        end
+      end
+
+      it "raises an Error indicating the script is unused" do
+        expect { checker.check! }.to raise_error(
+          Frai::Error,
+          /Script `orphan` exists in .* but is not declared/
+        )
+      end
+    end
   end
 end
-
-

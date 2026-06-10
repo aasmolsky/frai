@@ -734,6 +734,8 @@ Security findings:
 
 Type is declared in `task.rb` schema — not needed in templates.
 
+**Strict contract:** You cannot `run(:script)` or `use(:directive)` in templates unless they are explicitly declared inside the `schema do ... end` block of your `task.rb`. Doing so will raise `Frai::UndeclaredScript` or `Frai::UndeclaredDirective`.
+
 ---
 
 ## Scripts
@@ -1094,6 +1096,21 @@ end
 
 ---
 
+## Project validation
+
+`frai check` validates your project structure, ensuring that everything declared exists, and everything that exists is declared.
+
+It checks:
+1. Every task declares an output format (`output :text`, etc.)
+2. Every `use :directive` declared in a task evaluates to a real `.md.erb` file.
+3. Every `mcp :name` declared has a corresponding `mcp/name.rb` server definition.
+4. No **orphan directives**: every `.md.erb` file in `tasks/your_task/directives/` must be declared in `#use` or it raises an error.
+5. No **orphan scripts**: every script in `tasks/your_task/scripts/` must be declared in `#run` or it raises an error.
+
+If you create files and forget to reference them in `task.rb`, or declare references but forget to create the files, `frai check` will catch it.
+
+---
+
 ## Logging
 
 Write task output and errors to a log file — useful for cron jobs and automation:
@@ -1268,6 +1285,7 @@ Scripts can be written in any language (Ruby, Python, bash) — the spec only ca
 | `frai generate pipeline NAME` | Generate a pipeline (`frai gp`) |
 | `frai generate agent NAME` | Generate an agent (`frai ga`) |
 | `frai remove task NAME` | Remove a task and its Claude CLI command (`frai rt`) |
+| `frai check` | Validate project structure, task contracts, and MCP configurations |
 | `frai setup` | Register `mcp/*.rb` servers with Claude CLI (`frai s`) |
 | `frai destroy` | Clean up MCP servers and commands before deleting the project |
 | `frai list` | List all tasks, MCPs, pipelines, agents and shared directives (`frai l`) |
