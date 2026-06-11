@@ -2,6 +2,7 @@
 
 require "spec_helper"
 require "tmpdir"
+require "fileutils"
 
 RSpec.describe "Frai.autoload!" do
   subject(:autoload!) { Frai.autoload!(@root) }
@@ -48,14 +49,16 @@ RSpec.describe "Frai.autoload!" do
     end
   end
 
-  context "when a Ruby file outside scripts/ reads from $stdin", :aggregate_failures do
+  context "when a Ruby file outside scripts/ reads from $stdin" do
     let(:bad_file) { write("tasks/bad_task.rb", "$stdin.read") }
 
     before { bad_file }
 
-    it "raises Frai::Error with a descriptive message" do
-      expect { autoload! }.to raise_error(Frai::Error, /reads from stdin/)
-      expect { autoload! }.to raise_error(Frai::Error, /#{Regexp.escape(bad_file)}/)
+    it "raises Frai::Error mentioning the file path and the reason" do
+      expect { autoload! }.to raise_error(Frai::Error) do |error|
+        expect(error.message).to match(/reads from stdin/)
+        expect(error.message).to include(bad_file)
+      end
     end
   end
 

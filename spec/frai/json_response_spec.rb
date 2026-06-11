@@ -41,16 +41,12 @@ RSpec.describe Frai::JsonResponse do
       expect { described_class.normalize("not json at all") }
         .to raise_error(Frai::JsonParseError, /invalid JSON/)
 
-      error = nil
-      begin
-        described_class.normalize("not json at all", attempt: 2, task_class: String)
-      rescue Frai::JsonParseError => e
-        error = e
-      end
-
-      expect(error.attempt).to eq(2)
-      expect(error.task_class).to eq(String)
-      expect(error.raw_preview).to include("not json")
+      expect { described_class.normalize("not json at all", attempt: 2, task_class: String) }
+        .to raise_error(Frai::JsonParseError) do |error|
+          expect(error.attempt).to eq(2)
+          expect(error.task_class).to eq(String)
+          expect(error.raw_preview).to include("not json")
+        end
     end
 
     it "raises JsonParseError when root is not an object" do

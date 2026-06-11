@@ -5,30 +5,35 @@ module Frai
   #
   # Define the task contract directly in Ruby:
   #
-  #   module CodeReview
+  #   module AnalyzeItem
   #     class Task < BaseTask
   #       schema do
-  #         mcp :jira
-  #         mcp :gitlab
+  #         mcp :database
   #
-  #         param :task_id,  type: String, required: true
+  #         param :query,    type: String, required: true
   #         param :language, type: String, default: "english"
   #
-  #         use :code_style_guides do
-  #           use :naming_rules
-  #           use :formatting_rules
+  #         directive :task do
+  #           use :guidelines
+  #           run :fetch_context do
+  #             input   type: String
+  #             returns :context, type: String
+  #           end
   #         end
   #
-      #         run :analyze_diff do
-      #           input type: String
-      #           returns :metrics, type: String
-      #         end
+  #         output :text
   #       end
   #     end
   #   end
   #
-  #   CodeReview::Task.call(task_id: "PDB-111")
+  #   AnalyzeItem::Task.call(query: "hello world")
   class Task
+    # Returned by Task.run — bundles the primary output with script and prompt metadata.
+    # output         — the normal return value (same as Task.call)
+    # script_results — Hash of actual script outputs, keyed by return key
+    # prompt_results — Hash with :prompt (rendered text) + symbolic keys mirroring script_results
+    TaskResult = Struct.new(:output, :script_results, :prompt_results, keyword_init: true)
+
     class SchemaBuilder
       attr_reader :mcps, :constants, :llm_enabled, :output_kind, :output_schema, :output_validator,
                   :output_validate_method, :output_retries, :output_strict
@@ -106,6 +111,25 @@ module Frai
         @runs << [name.to_sym, input, returns, block]
       end
 
+      # Declares the entry-point directive for this task.
+      # The block contains `use` and `run` declarations — the same DSL as the
+      # top-level schema, but now explicitly named and scoped to one directive file.
+      #
+      # @example
+      #   directive :task do
+      #     use :guidelines
+      #     run :fetch_diff do
+      #       input type: String
+      #       returns :diff, type: String
+      #     end
+      #   end
+      def directive(name, &block)
+        raise Frai::Error, "directive :#{name} already declared for #{@task_name}" if @directive_name
+
+        @directive_name = name.to_sym
+        instance_eval(&block) if block_given?
+      end
+
       # Declare task output contract — required for every task.
       #
       # @param target [Class, :text] RubyLLM::Schema subclass for structured Hash, or `:text` for String
@@ -156,8 +180,8 @@ module Frai
           "#{@task_name} must declare output :text, output Hash, or output YourSchema"
       end
 
-      def build_directive(name = :main)
-        decl = DirectiveDeclaration.new(name)
+      def build_directive
+        decl = DirectiveDeclaration.new(@directive_name || :task)
         apply_to(decl)
         decl
       end
@@ -233,11 +257,11 @@ module Frai
         @_output_validate_method = builder.output_validate_method
         @_output_retries         = builder.output_retries
         @_output_strict         = builder.output_strict
-        @_directive_declaration = builder.build_directive(:main)
+        @_directive_declaration = builder.build_directive
       end
 
       # Returns the snake_case name derived from the class name or namespace.
-      # e.g. CodeReview::Task => "code_review"
+      # e.g. AnalyzeItem::Task => "analyze_item"
       #
       # @return [String]
       def task_name
@@ -309,6 +333,30 @@ module Frai
         new.call(input)
       end
 
+      # Executes the task and returns a TaskResult with all three outputs:
+      # output, script_results, and prompt_results.
+      #
+      # Use when you need script or prompt metadata alongside the primary output.
+      # Task.call stays unchanged and returns only the primary output.
+      #
+      # @example
+      #   result = PrepareReport::Task.run(language: "en", data: ..., llm_data: ...)
+      #   result.output          # => "The dataset shows clear patterns..."
+      #   result.script_results  # => { prepared_data: { item_id: "...", ... } }
+      #   result.prompt_results  # => { prompt: "You are a data analyst...", prepared_data: :prepared_data }
+      #
+      # @param input [Hash, String, nil]
+      # @return [Frai::Task::TaskResult]
+      def run(input = nil)
+        instance = new
+        output   = instance.call(input)
+        TaskResult.new(
+          output:         output,
+          script_results: instance.script_results,
+          prompt_results: instance.prompt_results
+        )
+      end
+
       # Checks structure once per project_root. Subsequent calls are no-ops.
       def ensure_structure_checked!
         return if @_structure_checked_for == Frai.configuration.project_root
@@ -349,16 +397,21 @@ module Frai
         self.class._directive_declaration
       )
 
-      if Frai.configuration.non_production?
-        warn "Frai [#{Frai.configuration.env}]: all MCPs skipped, LLM not called."
+      if Frai.configuration.dry_run?
+        # development / test: skip MCPs and LLM — return rendered prompt
+        warn "Frai [#{Frai.configuration.env}]: dry run — MCPs skipped, LLM not called."
         mcp_servers = []
       else
+        # production: resolve MCP definitions from mcp/*.rb.
+        # In cli_mode Frai only renders the prompt — the client runs MCP tools.
         mcp_servers = declared_mcp_servers
-        verify_mcp_servers!(mcp_servers)
       end
 
       prompt = renderer.render(decl, input)
       @_script_results = script_runner.return_values
+      @_prompt_results = { prompt: prompt }.merge(
+        @_script_results.keys.each_with_object({}) { |k, h| h[k] = k }
+      )
 
       # llm false: no LLM call; output Hash parses the rendered directive, output :text returns it as-is
       unless self.class._llm_enabled
@@ -366,9 +419,9 @@ module Frai
         return prompt
       end
 
-    # llm true, non-production or agent: return rendered prompt for inspection
+    # llm true, dry run / agent tool / CLI mode: return rendered prompt
     # In test, mock the task via allow(...).to receive(:call) if you need a Hash
-    return prompt if Frai.configuration.non_production? || Frai.configuration.agent?
+    return prompt if Frai.configuration.dry_run? || Frai.configuration.inside_agent_tool? || Frai.configuration.cli_mode?
 
       case self.class._output_kind
       when :schema
@@ -383,11 +436,11 @@ module Frai
     # Returns extracted script return values, keyed by the return key declared in the directive.
     # Available in overridden +call+ after +super+.
     #
-    #   % run(:prepare_data, params: :place_id, return: :prepared_data)
+    #   % run(:prepare_data, params: :item_id, return: :prepared_data)
     #
     # gives you:
     #
-    #   script_results[:prepared_data]  # => { place_id: ..., ... }
+    #   script_results[:prepared_data]  # => { item_id: "...", ... }
     #
     # Returns +{}+ only if the directive template doesn't call any scripts.
     #
@@ -400,6 +453,23 @@ module Frai
     # @return [Hash{Symbol => Object}]
     def script_results
       @_script_results || {}
+    end
+
+    # Returns the rendered prompt alongside symbolic references to script outputs.
+    # Symmetric to script_results: same keys, but values are the key symbols — not data.
+    # Use to get the prompt and discover which script outputs are available.
+    #
+    #   % run(:prepare_data, params: :data, return: :prepared_data)
+    #
+    # gives you:
+    #
+    #   prompt_results[:prompt]        # => "You are a review analyst..."
+    #   prompt_results[:prepared_data] # => :prepared_data  (symbolic reference)
+    #   script_results[:prepared_data] # => { item_id: "...", ... }  (actual data)
+    #
+    # @return [Hash{Symbol => Object}]
+    def prompt_results
+      @_prompt_results || {}
     end
 
     private
@@ -556,24 +626,11 @@ module Frai
         server = Frai::MCP.find(name)
         raise Frai::Error,
           "MCP :#{name} is declared in #{self.class} but not defined in mcp/#{name}.rb.\n" \
-          "Create the file or run `frai setup`." unless server
+          "Create mcp/#{name}.rb." unless server
         server
       end
     end
 
-    def verify_mcp_servers!(servers)
-      return if servers.empty?
-      return if Frai.configuration.model
-
-      registered = `claude mcp list 2>/dev/null`
-      servers.each do |server|
-        next if registered.include?(server.name.to_s)
-
-        raise Frai::Error,
-          "MCP :#{server.name} is not registered with Claude CLI.\n" \
-          "Run `frai setup` to register it."
-      end
-    end
 
     def validate_params!(decl, input)
       return input unless decl&.params_declaration
@@ -606,37 +663,11 @@ module Frai
     end
 
     def coerce_value(str, type)
-      # 1) Try strict JSON
-      require "json"
-      begin
-        parsed = JSON.parse(str)
-        return parsed if parsed.is_a?(type)
-      rescue JSON::ParserError
-        # fall through
-      end
-
-      # 2) Try YAML (handles additional formats)
-      require "yaml"
-      begin
-        parsed = YAML.safe_load(str)
-        return parsed if parsed.is_a?(type)
-      rescue StandardError
-        # fall through
-      end
-
-      # 3) Try Ruby literal (handles symbol keys, single quotes from CLI)
-      begin
-        parsed = eval(str) # rubocop:disable Security/Eval
-        return parsed if parsed.is_a?(type)
-      rescue StandardError
-        # fall through
-      end
-
-      str
+      Frai::ParamCoercion.parse_as(str, type)
     end
 
     def adapter
-      return Frai::Adapters::Null.new if Frai.configuration.non_production?
+      return Frai::Adapters::Null.new if Frai.configuration.dry_run?
 
       model = Frai.configuration.model
       return Frai::Adapters::Null.new unless model
@@ -652,4 +683,3 @@ end
 
 # Project-generated task files use `BaseTask` as the conventional superclass.
 class BaseTask < Frai::Task; end unless defined?(::BaseTask)
-

@@ -1,11 +1,12 @@
+# frozen_string_literal: true
+
 require "fileutils"
-require "erb"
+require_relative "base_generator"
 
 module Frai
   module Generators
-    class TaskGenerator
-      TEMPLATES_DIR  = File.expand_path("../templates/task",     __FILE__)
-      COMMANDS_DIR   = File.expand_path("../templates/commands", __FILE__)
+    class TaskGenerator < BaseGenerator
+      TEMPLATES_DIR = File.expand_path("templates/task", __dir__)
 
       def initialize(name)
         @name                = name
@@ -18,7 +19,6 @@ module Frai
         check_target_dir
         create_directories
         copy_templates
-        create_claude_command
         print_success
       end
 
@@ -39,7 +39,7 @@ module Frai
       def copy_templates
         {
           "task.rb.erb"                => "task.rb",
-          "directives/main.md.erb.erb" => "directives/main.md.erb"
+          "directives/task.md.erb.erb" => "directives/task.md.erb"
         }.each do |template, target|
           src  = File.join(TEMPLATES_DIR, template)
           dest = File.join(@target_dir, target)
@@ -48,34 +48,15 @@ module Frai
         end
       end
 
-      def create_claude_command
-        commands_dir = File.join(Dir.pwd, ".claude", "commands")
-        FileUtils.mkdir_p(commands_dir)
-        src  = File.join(COMMANDS_DIR, "task.md.erb")
-        dest = File.join(commands_dir, "#{@name}.md")
-        render_template(src, dest)
-        say_create ".claude/commands/#{@name}.md"
-      end
-
-      def render_template(src, dest)
-        raw    = File.read(src)
-        result = ERB.new(raw, trim_mode: "-").result(binding)
-        File.write(dest, result)
-      end
-
-      def say_create(path)
-        puts "  \e[32mcreate\e[0m  #{path}"
-      end
-
       def print_success
         puts ""
         puts "  \e[32m✓\e[0m Generated task \e[1m#{@qualified_class_name}\e[0m"
         puts ""
-        puts "  Use in Claude CLI (from this project directory):"
-        puts "    /#{@name} param_name(value)"
-        puts ""
-        puts "  Run directly:"
+        puts "  Run:"
         puts "    frai exec #{@qualified_class_name} \"param_name(value)\""
+        puts ""
+        puts "  Client setup (optional):"
+        puts "    frai setup --claude   # or --codex / --cursor"
         puts ""
       end
     end

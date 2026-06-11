@@ -5,7 +5,7 @@ module Frai
   # Used via the `directive` DSL block in a task class.
   #
   # @example
-  #   directive :main do
+  #   directive :task do
   #     params do
   #       required :input_numbers, String
   #     end

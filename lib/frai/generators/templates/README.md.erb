@@ -1,895 +1,494 @@
-# Frai
+# <%= @project_name %>
 
-**Frai** is a Ruby framework for building LLM-powered tasks, pipelines, and agents.
-
-Ruby is an expressive language built for developer happiness — but it rarely appears in AI tooling, where Python dominates. Frai brings Rails-style conventions to LLM workflows: clear structure, sensible defaults, and a simple contract that scales from a single prompt to a multi-agent system.
-
-Requires Ruby >= 3.3.0.
+An LLM project built with [Frai](https://github.com/aasmolsky/frai) — a Ruby framework for tasks, pipelines, and agents.
 
 ---
 
-## Installation
+## Table of contents
 
-Install the gem globally:
-
-```bash
-gem install frai
-```
-
-Or add to your Gemfile:
-
-```ruby
-gem "frai"
-```
-
-```bash
-bundle install
-```
-
-### Using frai in a Rails or host project
-
-If you're integrating frai into an existing Ruby project (Rails, Sinatra, etc.):
-
-**Option 1: Global installation** (recommended)
-```bash
-gem install frai
-frai new my_project
-```
-Then require the project in your Rails config:
-```ruby
-# config/initializers/frai.rb
-require_relative "../../path/to/my_project/config/frai"
-```
-
-**Option 2: Via Gemfile of a host project (Rails, etc.)**
-
-If frai runs inside an existing Ruby/Rails project that uses Bundler, add it to that project's Gemfile:
-```ruby
-# Gemfile of the Rails/host project
-gem "frai"
-```
-```bash
-bundle install
-bundle exec frai c          # console — only needed in bundler context
-bundle exec frai e TaskName # exec  — only needed in bundler context
-```
-
-**Key point:** A standalone frai project (created with `frai new`) does **not** need a `Gemfile` — frai (and `rspec`) must already be installed globally via `gem install frai`.
+- [Getting started](#getting-started)
+- [How it works](#how-it-works)
+- [Project structure](#project-structure)
+- [Environments](#environments)
+- [Two modes of operation](#two-modes-of-operation)
+- [Tasks](#tasks)
+- [Directives](#directives)
+- [Scripts](#scripts)
+- [Pipelines](#pipelines)
+- [Applications](#applications)
+- [Agents](#agents)
+- [Shared directives](#shared-directives)
+- [External MCP servers](#external-mcp-servers)
+- [Configuration](#configuration)
+- [Environment variables](#environment-variables)
+- [Client integrations](#client-integrations)
+- [Project validation](#project-validation)
+- [Project discovery](#project-discovery)
+- [Logging](#logging)
+- [Testing with RSpec](#testing-with-rspec)
+- [CLI reference](#cli-reference)
+- [Calling from Rails](#calling-from-rails)
+- [Removing a task](#removing-a-task)
+- [Destroying the project](#destroying-the-project)
+- [Troubleshooting](#troubleshooting)
+- [Learn more](#learn-more)
 
 ---
 
 ## Getting started
 
+**Cloned this repo?** Run setup first — client integrations are not in git.
+
 ```bash
-frai new <%= @project_name %>
-cd <%= @project_name %>
-cp .env.example .env        # fill in your secrets
-frai setup                  # register MCP servers with Claude CLI
-frai gt analyze_item        # generate your first task
+cp .env.example .env          # required — .env is git-ignored
+frai setup --claude           # CLI mode: MCPs + slash commands (pick your client)
+# frai setup --codex
+# frai setup --cursor
+frai check
+frai exec AnalyzeItem::Task "query(hello world)"
 ```
 
-**Generated structure:**
+**Do not skip `frai setup` after clone.** The repo has `mcp/*.rb`, but `.claude/commands/`, Codex MCP registration, and `.cursor/mcp.json` are created locally by setup. Without it, CLI/HITL mode will not see MCPs or task commands.
+
+| Step | In git? | After clone |
+|---|---|---|
+| `mcp/*.rb`, tasks, agents | yes | ready |
+| `.env` | no | `cp .env.example .env` and fill in |
+| `.claude/commands/`, client MCP config | no | `frai setup --claude` / `--codex` / `--cursor` |
+
+**API mode only** (`LLM_MODEL` set): setup is optional. You still need `cp .env.example .env`.
+
+**New task in an existing project:**
+
+```bash
+frai gt analyze_item
+frai setup --claude           # re-run after adding tasks or MCP servers
+frai check
+```
+
+This project starts in **dry run** (`FRAI_ENV=development`): scripts run, prompts render, no API key needed. For production, set `FRAI_ENV=production` — leave `LLM_MODEL` empty for CLI mode (prompt only) or set it for API mode.
+
+---
+
+## How it works
+
+Three building blocks:
+
+| Block | What it does | Who controls the flow |
+|---|---|---|
+| **Task** | One LLM call. Renders a prompt → calls LLM → returns result. | Developer (fixed) |
+| **Pipeline** | Sequential chain. Output of step N → input of step N+1. | Developer (fixed) |
+| **Agent** | LLM decides which tools to call. Loops until done. | LLM (dynamic) |
+
+The flow for a single task:
+
+```
+Task.call(params)
+  → validate params
+  → run scripts (JSON in/out subprocesses)
+  → render directive (ERB template with params + script results)
+  → send to LLM (or return prompt — see Environments)
+  → validate and return output
+```
+
+LLM and MCP are skipped when:
+- `FRAI_ENV` is `development` or `test` (dry run)
+- the task runs inside `Agent.call` as a PromptTool/ScriptTool (agent orchestrator calls the LLM)
+- `FRAI_ENV=production` and `LLM_MODEL` is empty (CLI mode — prompt returned for the client)
+
+---
+
+## Project structure
 
 ```
 <%= @project_name %>/
-  .rspec
-  tasks/
-    base_task.rb
-    analyze_item/                           # new task created
-      task.rb                               # namespace + schema
-      directives/
-        main.md.erb                         # entry point
-      scripts/
-  pipelines/
-    base_pipeline.rb
-  agents/
-    base_agent.rb
-  applications/            # public entrypoints for external callers
-  mcp/                     # external MCP server definitions
   config/
-    frai.rb                # model, API key, autoload
-  .env                     # local secrets — git-ignored
-  .env.example             # template to commit
-  .gitignore
+    frai.rb                 # entry point: loads .env, configures model, autoloads classes
+  tasks/
+    base_task.rb            # BaseTask < Frai::Task (do not edit)
+  pipelines/
+    base_pipeline.rb        # BasePipeline < Frai::Pipeline
+  agents/
+    base_agent.rb           # BaseAgent < Frai::Agent
+  applications/             # stable public entrypoints (create manually)
+  mcp/                      # MCP server definitions
+  directives/               # optional shared directives
   spec/
     spec_helper.rb
     conventions_spec.rb
+  .env                      # local secrets (git-ignored)
+  .env.example              # template (commit this)
+  .gitignore
+  .rspec
 ```
 
-**Key: Task naming convention**
+**Naming conventions:**
 
-When you run `frai gt analyze_item`:
-- Creates folder: `tasks/analyze_item/`
-- Creates file: `tasks/analyze_item/task.rb`
-- Inside `task.rb` is a namespace: `module AnalyzeItem; class Task < BaseTask; end; end`
-- **Invoke as**: `AnalyzeItem::Task.call(input)`
-- Or CLI: `frai exec AnalyzeItem::Task "input"`
+| Command | Creates class | Invoke as |
+|---|---|---|
+| `frai gt analyze_item` | `AnalyzeItem::Task` | `AnalyzeItem::Task.call(...)` |
+| `frai gp process` | `ProcessPipeline` | `ProcessPipeline.call(...)` |
+| `frai ga data_analysis` | `DataAnalysisAgent` | `DataAnalysisAgent.call(...)` |
 
 ---
 
 ## Environments
 
-Frai supports four environments controlled by `FRAI_ENV` in `.env`:
+`FRAI_ENV` is the **project environment** — set in `.env`, never changes at runtime.
 
-| `FRAI_ENV` | MCPs | LLM | Returns |
-|------------|------|-----|---------|
-| `development` | skipped | skipped | rendered prompt |
-| `test` | skipped | skipped | rendered prompt |
-| `agent` | connected | skipped | rendered prompt |
-| `production` | connected | called | LLM response |
+| `FRAI_ENV` | Task / Pipeline | Agent |
+|---|---|---|
+| `development` | dry run: prompt + scripts, no MCP, no LLM | dry run: stub response, no LLM |
+| `test` | same as development (RSpec only — forced by `spec_helper`) | same |
+| `production` | CLI or API mode (see below) | full LLM orchestration (requires `LLM_MODEL`) |
 
-Default is `production`. In `development` and `test`, all MCP servers are skipped and the null adapter is used regardless of `LLM_MODEL` — you see the rendered prompt without any API calls.
-In `agent` mode, MCP servers connect and scripts run (just like production), but the LLM call is skipped and the prompt is returned — designed for LLM orchestration flows where Tasks act as prompt generators for a parent agent.
+**Agent tools:** when a task runs inside `Agent.call` (via PromptTool/ScriptTool), the task skips its own LLM call — the agent orchestrator calls the LLM instead. This is not a separate `FRAI_ENV`; it is an internal execution context.
 
-Override inline for a single run:
+**CLI vs API** applies to standalone tasks and pipelines. Agents in `production` always need `LLM_MODEL` and `LLM_API_KEY` set — there is no CLI-only path for agents.
+
+The generated `.env` defaults to `development`. Override per-run:
+
 ```bash
 FRAI_ENV=production frai exec AnalyzeItem::Task "query(test)"
-FRAI_ENV=development frai exec AnalyzeItem::Task "query(test)"
+FRAI_ENV=production frai exec ProcessPipeline "input"
+FRAI_ENV=production frai exec DataAnalysisAgent "Analyze the input."
 ```
 
 ---
 
 ## Two modes of operation
 
-Frai supports two fundamental modes — **CLI mode** and **API mode**. They control how the LLM is invoked.
+Both modes require `FRAI_ENV=production` and apply to **tasks and pipelines**. In `development` / `test` (dry run), tasks return the rendered prompt and agents return a stub — no LLM calls.
 
-### CLI mode (for development, prototyping, Claude.app users)
-
-**Setup:** Leave `LLM_MODEL` unset in `.env`
+### CLI mode (human-in-the-loop, no API key)
 
 ```bash
 # .env
-# LLM_MODEL=...     (commented out)
-# LLM_API_KEY=...   (not needed)
+FRAI_ENV=production
+LLM_MODEL=              # empty
 ```
 
-**How it works:**
-- `frai exec` renders the prompt and **returns it as plain text**
-- Claude.app reads the text and acts as the LLM
-- No API calls are made by frai itself
-- Useful for development, one-off requests, or users in Claude.app
+Frai renders the prompt and returns it. MCPs must be available in your client — run `frai setup` for the client you use (see [Client integrations](#client-integrations)). The human runs the task in that client, which calls MCP tools.
 
-**Example:**
-```bash
-frai exec CodeReview::Task "task_id(PDB-123)"
-# Output: the rendered prompt (no API call)
-# You paste this into Claude.app for analysis
-```
-
-### API mode (for production, cron jobs, automation)
-
-**Setup:** Set `LLM_MODEL` and `LLM_API_KEY` in `.env`
+### API mode (automated)
 
 ```bash
 # .env
+FRAI_ENV=production
 LLM_MODEL=claude-opus-4-6
 LLM_API_KEY=sk-ant-...
 ```
 
-**How it works:**
-- `frai exec` renders the prompt **and sends it to the LLM API via RubyLLM**
-- Returns the LLM response directly
-- Works in background jobs, cron, automation without user intervention
-- Requires API credentials
-
-**Example:**
-```bash
-FRAI_ENV=production frai exec CodeReview::Task "task_id(PDB-123)"
-# Output: Claude's response (API call made internally)
-```
-
-### Development vs Production environments
-
-| Env | LLM Calls | MCPs | Use Case |
-|-----|-----------|------|----------|
-| **development** | skipped | skipped | See prompts without API calls, test locally |
-| **test** | skipped | skipped | Run specs, validate task structure |
-| **agent** | skipped | connected | Run tasks as prompt generators inside an orchestration loop |
-| **production** | called | connected | Real API calls, connected MCP servers |
-
-**Check which mode you're in:**
-```ruby
-Frai.configuration.env         # → :development, :test, :agent, or :production
-Frai.configuration.model       # → nil (CLI mode) or "claude-opus-4-6" (API mode)
-```
+Frai calls the LLM API and attaches MCPs directly via ruby_llm-mcp. No `frai setup` needed. **Required for agents** — they always run through the API in production.
 
 ---
 
 ## Tasks
 
-A task is the core unit — **one LLM call**. It validates input, runs scripts, renders a prompt, and optionally calls an LLM.
+A task is one LLM call — validates input, runs scripts, renders prompt, calls LLM.
 
-### Minimal
+### Creating a task
 
-```ruby
-module AnalyzeItem
-  class Task < BaseTask
-  end
-end
-
-AnalyzeItem::Task.call("some input")
+```bash
+frai gt analyze_item
 ```
 
 ### Schema DSL
 
-All task declarations live inside `schema do ... end`:
-
-| Command | Description |
-|---------|-------------|
-| `output :text` | Returns plain `String`. Required for every task |
-| `output Hash` | Returns a `Hash` parsed from JSON. Useful for script-only tasks |
-| `output YourSchema` | Returns a validated `Hash` via LLM structured output |
-| `output …, as: MyClass` | Wraps the resulting `Hash` in `MyClass.new(hash)` |
-| `output …, transform: ->(result, input) {}` | Reshapes the result — receives LLM output and task input |
-| `llm false` | Skip the LLM call — return the rendered prompt as a string |
-| `mcp :name` | Declare an MCP server dependency. Server must exist in `mcp/name.rb` |
-| `const :name, value` | Define a constant available in directives as `<%= name %>` |
-| `param :name, type: T, required: true` | Declare a required input parameter |
-| `param :name, type: T, default: val` | Declare an optional input parameter with default |
-| `param :name, type: Hash do ... end` | Declare a Hash param with explicit key schema |
-| `use :name` | Include a sub-directive (`directives/name.md.erb`) |
-| `run :name do ... end` | Declare a script with typed input and return schema |
-| `script_results[:name]` | Access script output in overridden `call` after `super` |
-
-### Hash params with key schema
-
-`type: Hash` **requires** an explicit key declaration — either a block or a `validate:` contract. Omitting it raises an `ArgumentError` at load time.
-
-The block is evaluated directly as a [`dry-schema`](https://dry-rb.org/gems/dry-schema) schema:
-
-**Option 1 — inline block:**
-
 ```ruby
-param :place_data, type: Hash do
-  required(:name).filled(:string)
-  required(:rating).filled(:float)
-  required(:address).filled(:string)
-end
-
-param :options, type: Hash, required: false, default: {} do
-  required(:language).filled(:string)
-  optional(:max_count).filled(:integer)
-end
-```
-
-**Option 2 — pre-defined schema:**
-
-```ruby
-PlaceDataSchema = Dry::Schema.define do
-  required(:name).filled(:string)
-  required(:rating).filled(:float)
-end
-
-param :place_data, type: Hash, validate: PlaceDataSchema
-```
-
-Any object responding to `.call(hash)` → `.success?` / `.errors` works as `validate:`.
-
-`validate:` and a block cannot be used together.
-
-### Understanding `run` blocks (scripts)
-
-Scripts are the mechanism for gathering external data. Each `run` block declares a script that will run as a subprocess and capture its result.
-
-**Structure:**
-
-```ruby
-run :fetch_diff do
-  input type: String              # scalar type — no block needed
-  returns :diff, type: String
-end
-```
-
-When the type is `Hash`, a dry-schema block is required:
-
-```ruby
-run :parse do
-  input type: Hash do
-    required(:place_id).filled(:string)
-    required(:processed_reviews).filled(:array)
-  end
-  returns :parsed, type: Hash do
-    required(:place_id).filled(:string)
-    required(:score).filled(:integer)
-    required(:status).filled(:string)
-  end
-end
-```
-
-**`input` / `returns` rules:**
-
-```ruby
-# ✓ scalar type — block not needed
-input type: String
-returns :diff, type: String
-
-# ✓ Hash — type: Hash is explicit, block is required
-input type: Hash do
-  required(:place_id).filled(:string)
-  required(:processed_reviews).filled(:array)
-end
-
-returns :parsed, type: Hash do
-  required(:place_id).filled(:string)
-  required(:score).filled(:integer)
-end
-
-# ✗ block without type: → ArgumentError at load time
-input do ... end
-returns :name do ... end
-
-# ✗ type: Hash without block → ArgumentError at load time
-input type: Hash
-returns :name, type: Hash
-```
-
-**How it executes:**
-
-1. Task receives input (e.g., `task_id: "PDB-123"`)
-2. Script runs, receives `{ input: task_id }` as JSON on stdin
-3. Script returns JSON like `{ "diff": "... code diff ..." }`
-4. Frai captures the `:diff` field and exposes it in the directive as `diff` method
-5. Template can use `<%= diff %>`
-
-**In the directive:**
-
-```erb
-% run(:fetch_diff, params: :task_id, return: :diff)
-
-Review this code:
-<%= diff %>
-```
-
-- `params: :task_id` — pass the `task_id` param to the script
-- `return: :diff` — extract the `diff` field from script's JSON output
-
-### Accessing script results after the LLM call
-
-Sometimes you need both the script result **and** the LLM response as the final output. Override `call`, invoke `super`, then read `script_results` — a `Hash` keyed by script name, populated automatically after the directive is rendered:
-
-```ruby
-class Blacklist::Task < BaseTask
-  schema do
-    param :comment,    type: String
-    param :conditions, type: Hash do
-      required(:signal_summary).filled(:string)
-    end
-
-    run :parse_input do
-      input type: Hash
-    end
-
-    output Hash
-  end
-
-  def call(input)
-    llm_result = super                          # renders prompt, runs scripts, calls LLM
-    parsed     = script_results[:prepared_data] # keyed by return: key declared in the directive
-    [parsed, llm_result]
-  end
-end
-```
-
-`script_results` is keyed by the **return key** declared in the directive — the same name you pass to `return:` in `% run(...)`. If the directive has `% run(:prepare_data, params: :place_id, return: :prepared_data)`, the value is already extracted: `script_results[:prepared_data]` gives you `{ place_id: ..., ... }` directly.
-
-`script_results` returns `{}` when no `run(...)` was called during directive rendering (e.g. the directive template doesn't reference the script).
-
-### Full example
-
-`task.rb` is the **contract** — params, constants, MCPs, sub-directives, and scripts are all declared in `schema do ... end`.
-
-```ruby
-module CodeReview
-  class Task < BaseTask
-    schema do
-      mcp :jira
-      mcp :gitlab
-
-      const :max_issues, 10
-
-      param :task_id,  type: String, required: true
-      param :language, type: String, default: "english"
-
-      use :code_style_guides do
-        use :naming_rules
-        use :formatting_rules
-      end
-
-      use :context do
-        run :fetch_diff do
-          input do
-            task_id String
-          end
-          returns :diff, type: String
-        end
-      end
-    end
-  end
-end
-```
-
-### Task file structure and organization
-
-When you run `frai gt code_review`, the generator creates:
-
-```
-tasks/
-  code_review/                    # task name in snake_case
-    task.rb                       # task contract (namespace + schema)
-    directives/
-      main.md.erb                 # entry point for LLM
-      code_style_guides.md.erb    # sub-directive (referenced in main)
-    scripts/
-      analyze_diff.rb             # script (returns JSON to stdout)
-      fetch_context.py            # can be any language
-```
-
-**Key points:**
-- Each task lives in its own folder under `tasks/`
-- `task.rb` contains the **namespace wrapper** and **schema declaration** — the contract
-- Task name is derived from folder name: `code_review/` → `CodeReview::Task`
-- Invoke as: `CodeReview::Task.call(task_id: "PDB-123")`
-- All directives and scripts are discovered automatically by name
-
-### Skipping the LLM call
-
-By default every task sends the rendered prompt to the LLM. Set `llm false` to skip the LLM call — useful for script-only steps, data transformation, or template rendering:
-
-```ruby
-module BuildReport
-  class Task < BaseTask
-    schema do
-      llm false
-
-      param :data, type: Hash, required: true
-
-      run :process do
-        input   type: Hash
-        returns :report, type: Hash
-      end
-
-      output Hash   # directive renders JSON; Frai parses it back to Hash
-    end
-  end
-end
-```
-
-| `llm` | `output` | Returns |
-|-------|----------|---------|
-| `true` (default) | `:text` | LLM response as `String` |
-| `true` | `YourSchema` | LLM response as validated `Hash` |
-| `true` | `Hash` | LLM response parsed as `Hash` (no schema sent) |
-| `false` | `:text` | rendered directive as `String` |
-| `false` | `Hash` | rendered directive parsed as `Hash` |
-
-**`llm false` + `output Hash`** is the pattern for script-only tasks: the script builds a data structure, the directive renders it as JSON (`<%= result.to_json %>`), and Frai parses it back to a `Hash` — no LLM involved.
-
-The Ruby class stays minimal — all structure comes from `schema do ... end` in `task.rb`.
-
----
-
-### Output (required)
-
-Every task must declare an `output` — it makes the return contract explicit. Without it, the class raises `Frai::MissingOutput` at load time.
-
-| Declaration | Returns | When to use |
-|-------------|---------|-------------|
-| `output :text` | `String` | prose, summaries, freeform LLM text |
-| `output Hash` | `Hash` | script-only tasks that render JSON — no schema needed |
-| `output YourSchema` | `Hash` | structured LLM output validated against a schema |
-| `output …, as: MyClass` | `MyClass` instance | wrap the Hash in your own object |
-| `output …, transform: proc` | anything | merge input + output, reshape, build a custom struct |
-
-#### Text output
-
-```ruby
-module Summarize
-  class Task < BaseTask
-    schema do
-      param :data, type: Hash, required: true
-
-      output :text
-    end
-  end
-end
-
-result = Summarize::Task.call(data: { ... })
-# => "The analysis shows..."   # String
-```
-
-#### Structured output
-
-Structured output uses a `RubyLLM::Schema` subclass. The schema is sent to the LLM as a structured format constraint (not injected into the prompt text). Frai validates the response, symbolizes all keys, and returns a `Hash`.
-
-```ruby
-require "ruby_llm/schema"
-
 module AnalyzeItem
-  class OutputSchema < RubyLLM::Schema
-    string :item_id
-    string :verdict
-
-    array :findings do
-      object do
-        string  :code
-        integer :severity
-        string  :description
-      end
-    end
-  end
-
   class Task < BaseTask
     schema do
-      param :item_id, type: String, required: true
+      mcp :database                                 # MCP dependency
+      const :max_items, 10                         # constant for templates
+      param :query, type: String, required: true    # input param
 
-      output OutputSchema
+      use :guidelines                               # sub-directive
+      run :fetch_context do                         # script
+        input   type: String
+        returns :context, type: String
+      end
+
+      output :text                                 # required: what .call returns
     end
   end
 end
-
-result = AnalyzeItem::Task.call(item_id: "abc")
-# => { item_id: "abc", verdict: "ok", findings: [...] }   # Hash
 ```
 
-#### Retries
+| Command | Where | Description |
+|---|---|---|
+| `output :text` / `Hash` / `Schema` | top-level | **Required.** Return type of `.call` |
+| `llm false` | top-level | Skip LLM — return rendered prompt |
+| `mcp :name` | top-level | MCP server dependency |
+| `const :name, val` | top-level | Constant for templates |
+| `param :name, type: T` | top-level | Input parameter |
+| `use :name` | `schema do` | Sub-directive file |
+| `run :name do` | `schema do` | Script declaration |
+| `directive :name do` | top-level | **Optional.** Custom entry directive; default is `:task` → `task.md.erb` |
 
-When parsing or validation fails, Frai appends the error to the original prompt and re-asks the LLM:
+Default entry point is `directives/task.md.erb`. Declare `use` and `run` directly in `schema do`.
+Use `directive :name do` only when the entry file has a different name — e.g. `directive :analyze` → `analyze.md.erb`.
+Wrapping `use` / `run` in `directive :task do` is equivalent for the default entry.
+
+### Params
 
 ```ruby
-output OutputSchema, retries: 2   # override per task
+param :name,    type: String,  required: true
+param :lang,    type: String,  default: "en"
+param :data,    type: Hash do                  # Hash requires dry-schema block
+  required(:id).filled(:string)
+end
+param :tags,    type: Array,   default: []
 ```
 
-The default number of retries is configured globally:
+### Calling a task
+
+Three ways to run a task — terminal CLI, interactive console, or Ruby code.
+
+**Example schema** (used in the snippets below):
 
 ```ruby
-Frai.configure do |config|
-  config.default_retries = 0  # 0 = one attempt, no retries (default)
+param :query, type: String,  required: true
+param :limit, type: Integer, required: false, default: 10
+param :data,  type: Hash,    required: true do
+  required(:id).filled(:string)
 end
 ```
 
-After all retries are exhausted, `Frai::OutputRetriesExhaustedError` is raised.
+#### Terminal (`frai exec`)
 
-#### Output validation
+`frai exec` parses `INPUT` as a string. Use `name(value)` for named params. Values inside `(...)` are strings unless the value looks like JSON/YAML `{...}` or `[...]` — then it is parsed into a Hash or Array.
 
-Add business-rule checks after the schema is parsed. Raise `Frai::ValidationError` to trigger a retry.
+| Param type | Example command | Notes |
+|---|---|---|
+| String | `frai exec AnalyzeItem::Task "query(hello world)"` | Spaces inside `(...)` are fine |
+| String (several) | `frai exec AnalyzeItem::Task "query(test) lang(en)"` | Multiple `name(value)` pairs |
+| Integer | — | CLI passes `limit(10)` as the string `"10"` — use console or Ruby if the param is `Integer` |
+| Hash | `frai exec MyTask::Task 'data({"id":"abc"})'` | Prefer JSON; single-quote the shell arg |
+| Hash (YAML) | `frai exec MyTask::Task 'data({id: abc})'` | YAML flow style also works |
+| Array | `frai exec MyTask::Task 'tags(["urgent","review"])'` | JSON array |
 
-The validator receives two arguments:
-- `output` — parsed, symbolized `Hash` (or `String` for `:text`)
-- `input` — task input params as a `Hash`
+```bash
+# string
+frai exec AnalyzeItem::Task "query(hello world)"
 
-**Inline block** — for short checks:
+# hash (quote for the shell so JSON stays intact)
+frai exec MyTask::Task 'data({"id":"item-1","score":42})'
+
+# production override
+FRAI_ENV=production frai exec AnalyzeItem::Task "query(test)"
+```
+
+Pipelines and agents accept a plain string when they take a single message:
+
+```bash
+frai exec ProcessPipeline "raw input text"
+frai exec DataAnalysisAgent "Analyze the input."
+```
+
+#### Console (`frai console`)
+
+Load the project, then call with native Ruby types — no string parsing:
+
+```bash
+frai console
+```
+
+```ruby
+AnalyzeItem::Task.call(query: "hello world")
+MyTask::Task.call(
+  query: "summarize",
+  limit: 10,
+  data:  { id: "item-1", score: 42 }
+)
+```
+
+Use the console when params include `Integer`, `Boolean`, or nested structures that are awkward to quote in the shell.
+
+#### Ruby code (scripts, Rails, tests)
+
+Same as the console — pass a Hash with real types:
+
+```ruby
+AnalyzeItem::Task.call(query: "hello world")
+Application.call(items: data, language: "en")
+```
+
+### Output
+
+Every task must declare one:
+
+| Declaration | Returns |
+|---|---|
+| `output :text` | `String` |
+| `output Hash` | `Hash` (parsed from JSON) |
+| `output YourSchema` | `Hash` (validated via RubyLLM structured output) |
+| `output Schema, retries: 2` | Retry on validation failure |
+
+#### Validation
 
 ```ruby
 output OutputSchema, retries: 2 do |output, input|
-  expected = Array(input[:items]).size
-  actual   = Array(output[:findings]).size
+  raise Frai::ValidationError, "wrong count" if output[:count] != input[:items].size
+end
+```
 
-  if expected != actual
-    raise Frai::ValidationError,
-          "findings must have #{expected} items, got #{actual}"
+Or delegate: `output OutputSchema, validate: :validate_output!`
+
+### Skipping the LLM
+
+`llm false` + `output Hash` = data-transformation task (scripts run, no LLM):
+
+```ruby
+schema do
+  llm false
+  param :data, type: Hash
+  run :process do
+    input type: Hash
+    returns :result, type: Hash
   end
+  output Hash
 end
 ```
 
-**`validate:` — delegate to a private instance method:**
+### Script results after LLM call
 
 ```ruby
-output OutputSchema, validate: :validate_output!
-
-private
-
-def validate_output!(output, input)
-  expected = Array(input[:items]).size
-  actual   = Array(output[:findings]).size
-  return if expected == actual
-
-  raise Frai::ValidationError,
-        "findings must have #{expected} items, got #{actual}"
+def call(input)
+  llm_result = super
+  data = script_results[:prepared]  # keyed by return: in directive
+  { data: data, analysis: llm_result }
 end
 ```
 
-**Block calling a private method** — block runs in the context of the task instance, so private methods are accessible:
+### Task.run — output + metadata together
+
+`Task.call` returns only the primary output. `Task.run` returns a `TaskResult` with all three:
 
 ```ruby
-output OutputSchema do |output, input|
-  validate_output!(output, input)
-end
+result = PrepareReport::Task.run(language: "en", data: ..., llm_data: ...)
 
-private
-
-def validate_output!(output, input)
-  # ...
-end
+result.output          # => "The dataset shows clear patterns..."  (same as .call)
+result.script_results  # => { prepared_data: { item_id: "...", score: 42 } }
+result.prompt_results  # => { prompt: "You are a data analyst...", prepared_data: :prepared_data }
 ```
 
-> `validate:` and a block cannot be declared together — Frai raises an error at class load time.
-
-#### Wrapping output in a Ruby object (`as:`)
-
-By default `output Hash` and `output YourSchema` return a plain `Hash`. Use `as:` to automatically wrap it in your own class:
+Use `Task.run` in pipelines or services when you need script outputs alongside the LLM result — without splitting the task or overriding `call`:
 
 ```ruby
-class ReviewResult
-  attr_reader :score, :comments
-
-  def initialize(hash)
-    @score    = hash[:score]
-    @comments = hash[:comments]
-  end
-
-  def passed? = @score >= 80
-end
-
-class CodeReview::Task < BaseTask
-  schema do
-    param :diff, type: String
-    output OutputSchema, as: ReviewResult
-  end
-end
-
-result = CodeReview::Task.call(diff: "...")
-# => #<ReviewResult score=95, comments="...">
-result.passed?  # => true
+prep = PrepareReport::Task.run(language: input[:language], data: ..., llm_data: analyzed)
+BuildReport::Task.call(data: prep.script_results[:prepared_data], llm_data: prep.output)
 ```
-
-`as:` accepts any class that takes a single `Hash` argument in `initialize`. `Data.define` and `Struct` work out of the box.
-
-> `as:` is not supported with `output :text`.
-
-#### Transforming output (`transform:`)
-
-Use `transform:` when you need the LLM result **merged with the input**, or any other arbitrary reshaping. The transformer receives `(llm_result, input)` and its return value becomes the task result:
-
-```ruby
-# Inline lambda — merge input params into the LLM response
-output Hash, transform: ->(llm_result, input) { input.merge(llm_result) }
-```
-
-```ruby
-# Delegate to a private instance method
-output Hash, transform: :build_result
-
-private
-
-def build_result(llm_result, input)
-  input.merge(llm_result).merge(processed_at: Time.now)
-end
-```
-
-> `as:` and `transform:` cannot be used together.
-
----
-
-**MCP validation rules:**
-- Task declares `mcp :name` but `mcp/name.rb` is missing → error at startup
-- `mcp/name.rb` exists but no task declares it → error at startup
-- MCP not registered with Claude CLI (CLI mode) → error before LLM call
-- MCP not accessible (API mode) → error before LLM call
 
 ---
 
 ## Directives
 
-Directives are Markdown + ERB prompt templates. `main.md.erb` is always the entry point for the LLM call.
+Directives are Markdown + ERB templates. `task.md.erb` is the entry point.
 
-**Example:** `tasks/code_review/directives/main.md.erb`
-
-### Available helpers in directives
-
-**Variables** — access params, constants, and script results as plain methods:
+### Helpers
 
 ```erb
-You are a code reviewer.
-Review this code:
+<%%# Variables: params, constants, script results %>
+<%%= query %>
+<%%= max_items %>
+<%%= context %>
 
-<%= diff %>
+<%%# Run a script %>
+% run(:fetch_context, params: :query, return: :context)
+<%%= context %>
 
-Use these guidelines:
-<%= guidelines %>
-```
+<%%# Use a sub-directive (inline) %>
+<%%= use(:guidelines) %>
 
-**Run a script** — capture result into a variable:
+<%%# Use a sub-directive (capture) %>
+% use(:security_check, params: :context, return: :issues)
+<%%= issues %>
 
-```erb
-% run(:fetch_diff, params: :task_id, return: :diff)
-
-Code changes:
-<%= diff %>
-```
-
-**Use a sub-directive** — inline rendering:
-
-```erb
-<%= use(:summary, params: :analysis_result) %>
-```
-
-**Use a sub-directive** — capture into variable:
-
-```erb
-% use(:security_check, params: :diff, return: :security_issues)
-
-Security findings:
-<%= security_issues %>
-```
-
-**Conditional logic**:
-
-```erb
-% use(:analyze_diff, params: :diff, return: :result)
-
-% if result.include?("critical")
-  ALERT: Critical issues found!
-  <%= use(:escalate_summary, params: :result) %>
-% else
-  Code is OK
+<%%# Conditional logic %>
+% if context.include?("critical")
+  ALERT!
 % end
 ```
 
-### Key points
+**Strict contract:** `use(:x)` and `run(:x)` must be declared in `schema do` — otherwise `Frai::UndeclaredDirective` / `Frai::UndeclaredScript`.
 
-| Concept | Syntax | Returns |
-|---------|--------|---------|
-| **Run script** | `% run(:name, params: :param, return: :var)` | "" (no text output) |
-| **Inline sub-directive** | `<%= use(:name, params: :param) %>` | rendered text |
-| **Capture sub-directive** | `% use(:name, params: :param, return: :var)` | "" (text in @var) |
-| **Access variable** | `<%= var_name %>` | the value |
-| **Params / constants / results** | `<%= param %>` | available as methods |
+### Script markers vs regular words
 
-Type is declared in `task.rb` schema — not needed in templates.
+Use `:<script_key>` literally in the template to mark where script data belongs.
+Regular words (no colon) are never confused with script references.
 
-**Strict contract:** You cannot `run(:script)` or `use(:directive)` in templates unless they are explicitly declared inside the `schema do ... end` block of your `task.rb`. Doing so will raise `Frai::UndeclaredScript` or `Frai::UndeclaredDirective`.
+```erb
+% run(:fetch_context, params: :query, return: :context)
+% run(:extract_patterns, params: :payload, return: :patterns)
+
+Here is the :context to review.            ← script marker: agent knows data lives here
+Known problem :patterns in this dataset.    ← script marker
+
+Review the input against the patterns.      ← plain words, not markers
+```
+
+When this task is wrapped in a `PromptTool`, `prompt_results` returns:
+
+```ruby
+{
+  prompt:   "Here is the :context to review.\nKnown problem :patterns...\n...",
+  context:  :context,   # key == value → signals a script ran
+  patterns: :patterns
+}
+```
+
+A paired `ScriptTool` returns the actual data:
+
+```ruby
+{ diff: "--- a/file.rb\n...", patterns: { n_plus_one: true } }
+```
+
+### Descriptions for `frai list`
+
+```erb
+<desc>Analyzes input data</desc>
+
+You are a data analyst...
+```
 
 ---
 
 ## Scripts
 
-Scripts receive `{ input: value }` as JSON on stdin and write a JSON hash to stdout:
+External subprocesses: JSON on stdin → JSON on stdout.
+
+| Extension | Runtime |
+|---|---|
+| `.rb` | ruby |
+| `.py` | python3 |
+| `.js` | node |
+| `.sh` | bash |
 
 ```ruby
 # tasks/analyze_item/scripts/fetch_data.rb
-require 'json'
+require "json"
 input = JSON.parse($stdin.read, symbolize_names: true)[:input]
 puts JSON.generate({ diff: "diff for #{input}" })
 ```
 
-```python
-# tasks/analyze_item/scripts/fetch.py
-import sys, json
-data = json.load(sys.stdin)
-print(json.dumps({ "result": f"fetched: {data['input']}" }))
-```
-
-Scripts in `scripts/` are never autoloaded — they run as subprocesses. Results are memoized per task execution.
-
----
-
-## Configuration
-
-```ruby
-# config/frai.rb
-Frai.configure do |config|
-  config.model   = ENV["LLM_MODEL"]     # nil = CLI mode, set = API mode
-  config.api_key = ENV["LLM_API_KEY"]   # for the configured LLM provider
-end
-```
-
-`config/frai.rb` automatically loads `.env` on startup.
-
----
-
-## Environment variables
-
-```bash
-# .env — git-ignored
-LLM_MODEL=claude-opus-4-6   # comment out for CLI mode
-LLM_API_KEY=your_api_key
-
-# MCP server credentials
-JIRA_MCP_URL=https://...
-GITLAB_TOKEN=your_token
-```
-
-Commit `.env.example` with empty values as a template for teammates.
-
----
-
-## External MCP servers
-
-**Step 1** — define the server in `mcp/*.rb`:
-
-```ruby
-# mcp/database.rb — stdio (local subprocess)
-Frai::MCP.define :database do
-  command "npx"
-  args    ["-y", "@modelcontextprotocol/server-postgres", ENV["DATABASE_URL"]]
-  env     DATABASE_URL: ENV["DATABASE_URL"]
-end
-
-# mcp/search.rb — HTTP (no auth)
-Frai::MCP.define :search do
-  url ENV["SEARCH_MCP_URL"]
-end
-
-# mcp/portal.rb — HTTP with OAuth (browser auth on first run)
-Frai::MCP.define :portal do
-  url   ENV["PORTAL_MCP_URL"]
-  oauth true
-end
-```
-
-**Step 2** — declare which MCPs each task needs in `schema do` inside `task.rb`:
-
-```ruby
-module Analyze
-  class Task < BaseTask
-    schema do
-      mcp :database
-      mcp :search
-
-      # ...
-    end
-  end
-end
-```
-
-**Step 3** — register with Claude CLI:
-
-```bash
-frai setup   # or: frai s
-```
-
-### OAuth HTTP MCP servers
-
-When `oauth true` is set, frai manages tokens automatically:
-
-- **First run**: browser opens for authentication. Token saved to `.frai_oauth_cache.json` (git-ignored).
-- **Subsequent runs**: cached token used directly. Silent refresh attempted if expired.
-- **Token expired (refresh fails)**: browser opens again.
-- **For cron jobs**: authenticate once manually (`frai exec`), then cron uses the cached token.
-- **Token cache expired**: if both access and refresh tokens are no longer valid, delete the cache file and re-authenticate:
-  ```bash
-  rm .frai_oauth_cache.json
-  frai exec TaskName "param(value)"   # browser opens once
-  ```
-
----
-
-## Claude CLI integration
-
-Each task gets its own slash command — created automatically by `frai gt`:
-
-```bash
-frai gt analyze_item
-# → creates task files
-# → creates .claude/commands/analyze_item.md
-```
-
-Invoke from Claude CLI **inside the project directory**:
-
-```
-/analyze_item query(some text)
-/analyze_item query(some text) lang(en)
-```
-
-Arguments use `name(value)` format — names match params declared in `schema do`.
-Also supports `key:value` format: `/analyze_item query:some-text`
-
-If the command fails, Claude reports the error and stops — it does not retry or guess parameters.
+Scripts are never autoloaded. Results are memoized per task execution.
 
 ---
 
 ## Pipelines
 
+Sequential chain of tasks. Each step follows the same environment rules as a standalone task — in dry run you get prompts; in production CLI mode each step returns a prompt string.
+
 ```bash
-frai gp review_pipeline
+frai gp process
 ```
 
 ```ruby
-class ReviewPipeline < BasePipeline
+class ProcessPipeline < BasePipeline
   def call(input)
-    diff   = FetchDiff::Task.call(input)
-    review = CodeReview::Task.call(diff)
-    review
+    context = FetchContext::Task.call(input)
+    AnalyzeItem::Task.call(context)
   end
 end
 ```
@@ -898,111 +497,389 @@ end
 
 ## Applications
 
-An application is the **stable public entrypoint** for a Frai project. External callers — Rails, other services, scripts — always call `Application.call(...)`. The internal implementation can change freely without affecting the caller.
+Stable public entrypoint — external callers always call `Application.call(...)`. No generator; create manually.
 
 ```ruby
 # applications/application.rb
 class Application < Frai::Application
-  def call(reviews:, language: "english")
-    data     = FetchData::Task.call(reviews)
-    response = Analyze::Task.call(language: language, data: data)
-    response
+  def call(items:, language: "english")
+    data = FetchItems::Task.call(items)
+    AnalyzeItem::Task.call(language: language, data: data)
   end
 end
-
-Application.call(reviews: [...], language: "english")
-```
-
-You can later add a step, swap a task, or change the flow — the external call site stays the same:
-
-```ruby
-# Before
-def call(reviews:, language: "english")
-  Analyze::Task.call(reviews)
-end
-
-# After — caller doesn't need to change
-def call(reviews:, language: "english")
-  normalized = Normalize::Task.call(reviews)
-  analyzed   = Analyze::Task.call(normalized)
-  Translate::Task.call(analyzed, language: language)
-end
-```
-
-### Calling from Rails
-
-Since it's plain Ruby, Rails can call the application class directly:
-
-```ruby
-# config/initializers/frai.rb
-require Rails.root.join("lib/my_frai_project/config/frai")
-
-# app/services/analysis_service.rb
-result = Application.call(reviews: reviews, language: "english")
-```
-
-The frai project lives in `lib/` and is loaded via the initializer. All classes — `Application`, tasks, pipelines — become available as regular Ruby constants.
-
----
-
-## Application vs Agent
-
-| | Application | Agent |
-|---|---|---|
-| **Who decides what to call** | Developer (Ruby) | LLM at runtime |
-| **Flow** | Fixed: step 1 → step 2 → output | Dynamic: branches, loops, retries |
-| **LLM in control loop** | No | Yes |
-| **Steps defined upfront** | Yes | No |
-| **Use when** | Predictable, repeatable workflows | Open-ended tasks requiring reasoning |
-
-### Application — deterministic chain
-- Steps are plain Ruby — you decide the order
-- LLM does not decide what to call next
-- Fast, predictable, easy to test
-
-### Agent — dynamic decision
-- LLM decides which tasks to call and when
-- Can loop, branch, and call tools multiple times
-- LLM is in the control loop
-
----
-
-## Shared Directives
-
-By default, any directive files you write are scoped to their task (e.g. `tasks/code_review/directives/guidelines.md.erb`).
-
-When you need to share a directive across multiple tasks, you can create a top-level `directives/` folder in your project root:
-
-```bash
-mkdir directives
-touch directives/guidelines.md.erb
-```
-
-Frai automatically discovers shared directives. Any task can now use it inside `schema do` and its templates:
-
-```erb
-# Inside your task's main.md.erb:
-<%= use :guidelines %>
 ```
 
 ---
 
 ## Agents
 
+LLM-driven orchestrator — decides which tools to call based on intermediate results.
+
 ```bash
-frai ga research_agent
+frai ga data_analysis
 ```
 
-An agent is an **LLM-driven orchestrator** — it decides which tasks and tools to call based on intermediate results. Unlike an application, the flow is not fixed in advance.
-
 ```ruby
-class ResearchAgent < BaseAgent
-  def call(input)
-    data    = FetchData::Task.call(input)
-    summary = Summarize::Task.call(data)
-    summary
+class DataAnalysisAgent < BaseAgent
+  inputs :payload
+
+  schema do
+    directive :instructions       # for frai check validation
+  end
+
+  instructions                    # loads instructions.md.erb as system prompt
+
+  tools do
+    [Frai::PromptTool.for(FetchItems::Task, description: "Fetches raw data")]
   end
 end
+
+DataAnalysisAgent.call("Analyze the input.", payload: data)
+```
+
+In `development` / `test`, `Agent.call` returns `"[dry run] AgentName: message"` without calling the LLM. In `production`, set `LLM_MODEL` and `LLM_API_KEY` — agents do not support CLI mode.
+
+### Key concepts
+
+- `inputs :name` — declares keyword args available inside `tools do`
+- `schema do directive :name end` — declares files for `frai check` (no runtime effect)
+- `instructions` — loads `agents/<name>/directives/instructions.md.erb`
+- `Frai::PromptTool` — wraps a task, returns `prompt_results` (rendered prompt + symbolic script refs)
+- `Frai::ScriptTool` — wraps a `llm false` task, returns `script_results` (actual script data)
+- Agents cannot be nested
+
+### PromptTool and ScriptTool
+
+Each tool has a single responsibility:
+
+| Tool | Returns | Use when |
+|---|---|---|
+| `PromptTool` | `prompt_results` — `{ prompt: "...", script_key: :script_key }` | Agent should read and reason over the prompt |
+| `ScriptTool` | `script_results` — `{ script_key: { actual data } }` | Agent needs raw data (e.g. to pass to another tool) |
+
+Pair them on the **same task** when the agent needs both:
+
+```ruby
+# PromptTool — agent reads the prompt
+class GetReportPromptTool < Frai::PromptTool
+  task PrepareReport::Task
+  description "Returns report writing instructions. Call before writing the report."
+
+  param :llm_data, type: "object", desc: "Structured analysis from previous step"
+
+  def initialize(payload) = @payload = payload
+
+  def execute(llm_data:)
+    call_task(language: @payload[:language], data: @payload[:data], llm_data: llm_data)
+    # => { prompt: "Write a report about :prepared_data...", prepared_data: :prepared_data }
+  end
+end
+
+# ScriptTool — agent gets actual data
+class GetReportDataTool < Frai::ScriptTool
+  task PrepareReport::Task
+  description "Returns prepared analysis data. Provides the prepared_data for build_report."
+
+  param :llm_data, type: "object", desc: "Structured analysis from previous step"
+
+  def initialize(payload) = @payload = payload
+
+  def execute(llm_data:)
+    call_task(language: @payload[:language], data: @payload[:data], llm_data: llm_data)
+    # => { prepared_data: { item_id: "...", score: 42, ... } }
+  end
+end
+```
+
+The agent connects them by matching key names: `:prepared_data` in `prompt_results` signals that `script_results[:prepared_data]` has the corresponding data.
+
+### Custom PromptTool with constructor injection
+
+```ruby
+class BatchPromptTool < Frai::PromptTool
+  task AnalyzeBatch::Task
+  description "Generates batch analysis prompt"
+
+  def initialize(payload)
+    @payload = payload
+  end
+
+  def execute
+    call_task(item_id: @payload[:item_id], items: @payload[:items])
+  end
+end
+```
+
+---
+
+## Shared directives
+
+Create a top-level `directives/` folder for prompts shared across tasks:
+
+```bash
+mkdir directives
+echo "Be concise." > directives/style_guide.md.erb
+```
+
+Declare in schema and use in templates:
+
+```ruby
+schema do
+  use :style_guide
+  output :text
+end
+```
+
+`frai check` validates every file in `directives/` is used by at least one task.
+
+---
+
+## External MCP servers
+
+### Define
+
+```ruby
+# mcp/database.rb
+Frai::MCP.define :database do
+  desc    "PostgreSQL access"
+  command "npx"
+  args    ["-y", "@modelcontextprotocol/server-postgres", ENV["DATABASE_URL"]]
+  env     DATABASE_URL: ENV["DATABASE_URL"]
+end
+
+# mcp/remote_service.rb — HTTP with OAuth
+Frai::MCP.define :remote_service do
+  url     ENV["REMOTE_MCP_URL"]
+  url_env "REMOTE_MCP_URL"   # Cursor: ${env:REMOTE_MCP_URL}
+  oauth   true
+end
+
+# mcp/api_gateway.rb — HTTP with bearer token
+Frai::MCP.define :api_gateway do
+  url        ENV["GATEWAY_MCP_URL"]
+  bearer_env "GATEWAY_TOKEN" # Codex/Cursor auth
+end
+```
+
+### Declare in task
+
+```ruby
+schema do
+  mcp :database
+  # ...
+end
+```
+
+### Connect MCP servers
+
+**API mode** (automated — Rails, scripts, CI): no setup needed. Frai reads `mcp/*.rb` and connects via ruby_llm-mcp at runtime.
+
+**CLI mode** (human-in-the-loop, no API key): register MCP servers with your client:
+
+```bash
+frai setup --claude   # Claude CLI
+frai setup --codex    # Codex CLI
+frai setup --cursor   # Cursor (.cursor/mcp.json)
+```
+
+Combine targets if you use more than one client: `frai setup --claude --cursor`.
+
+Restart the client after setup (Claude/Codex) or reload MCP servers in Cursor settings.
+
+**HTTP auth DSL:**
+
+| Declaration | Used by |
+|---|---|
+| `oauth true` | API: ruby_llm-mcp browser flow. Codex: `codex mcp login`. Cursor: UI prompt. |
+| `bearer_env "VAR"` | Codex: `--bearer-token-env-var`. Cursor: `Authorization: Bearer ${env:VAR}`. |
+| `url_env "VAR"` | Cursor only: `${env:VAR}` instead of a resolved URL in `.cursor/mcp.json`. |
+
+**OAuth tokens are not shared between modes.** Each client keeps its own cache:
+
+| Mode | Token storage |
+|---|---|
+| API | `.frai_oauth_cache.json` (delete to re-authenticate) |
+| Codex CLI | Codex config / `codex mcp login` |
+| Cursor | Cursor MCP settings |
+| Claude CLI | Claude MCP OAuth flow |
+
+Re-run `frai setup` after adding/removing tasks or MCP servers, or when `.env` changes.
+
+---
+
+## Configuration
+
+`config/frai.rb` was generated for this project — loads `.env`, autoloads classes, and configures frai.
+
+| Option | Default | Description |
+|---|---|---|
+| `config.model` | `nil` | LLM model. `nil` + `FRAI_ENV=production` = CLI mode for tasks. Required for agents in production. |
+| `config.api_key` | `nil` | Provider API key. Required when `config.model` is set. |
+| `config.env` | from `FRAI_ENV` | Project environment (`:development`, `:test`, `:production`). Generated `.env` defaults to `development`. |
+| `config.project_root` | `Dir.pwd` | Project root path. |
+| `config.default_retries` | `0` | Default LLM retries on validation failure. |
+
+---
+
+## Environment variables
+
+```bash
+# .env (git-ignored)
+FRAI_ENV=development    # development | test | production
+LLM_MODEL=              # empty in production = CLI mode for tasks; required for agents
+LLM_API_KEY=            # required when LLM_MODEL is set
+```
+
+| Variable | Values | Effect |
+|---|---|---|
+| `FRAI_ENV` | `development` (default in generated `.env`), `test`, `production` | Controls dry run vs real execution |
+| `LLM_MODEL` | model name or empty | Empty + `production` → CLI mode (tasks only). Set → API mode |
+| `LLM_API_KEY` | provider key | Used when `LLM_MODEL` is set |
+
+---
+
+## Client integrations
+
+Frai supports **three optional human-in-the-loop clients** (Claude CLI, Codex CLI, Cursor). All share one `mcp/*.rb` config — setup is a thin adapter per client. **API mode** is a fourth path: no setup, Frai connects MCPs at runtime via ruby_llm-mcp.
+
+Setup tracks managed resources in `.frai/setup_state.json` (git-ignored) to remove orphan slash commands and Cursor MCP entries when tasks or servers are deleted.
+
+| Client | Setup | What it configures |
+|---|---|---|
+| **Claude CLI** | `frai setup --claude` | `claude mcp add` + slash commands in `.claude/commands/` |
+| **Codex CLI** | `frai setup --codex` | `codex mcp add` |
+| **Cursor** | `frai setup --cursor` | `.cursor/mcp.json` (secrets as `${env:VAR}`) |
+
+`frai setup` without a flag prints an error with the list above.
+
+### Claude CLI — slash commands
+
+Slash commands for tasks are created by `--claude` setup (not by `frai gt`). Class names are taken from the loaded task class (e.g. `PrepareLLMReport::Task`), not guessed from the folder name — re-run setup to update commands after renames.
+
+```bash
+frai setup --claude
+# creates or updates .claude/commands/analyze_item.md for each task
+```
+
+Inside Claude CLI:
+
+```
+/analyze_item query(some text)
+/analyze_item query(hello world) language(english)
+```
+
+### Codex CLI
+
+Registers the same MCP servers via `codex mcp add`. For HTTP servers with `oauth true`, run `codex mcp login <name>` if Codex prompts for authentication.
+
+### Cursor
+
+Writes or merges `.cursor/mcp.json`. Environment variables are referenced as `${env:VAR}` — values stay in `.env`, not in the config file. Safe to commit when only env refs are used.
+
+---
+
+## Project validation
+
+```bash
+frai check
+```
+
+Validates:
+1. Every task declares `output`
+2. All `use :x` and `run :x` resolve to real files
+3. All `mcp :x` have corresponding `mcp/x.rb`
+4. No orphan directives or scripts
+5. Agent `directive :x` files exist on disk
+
+---
+
+## Project discovery
+
+```bash
+frai list
+```
+
+Shows all tasks (with params, MCPs, directives, scripts), pipelines, agents, and MCP servers.
+
+---
+
+## Logging
+
+```bash
+frai exec AnalyzeItem::Task "query(text)" --log logs/run.log
+```
+
+---
+
+## Testing with RSpec
+
+`rspec` is bundled. This project includes `spec/spec_helper.rb` that **forces `FRAI_ENV=test`** before `config/frai.rb` loads — even if `.env` has `production`. Do not run specs with `FRAI_ENV=development`; `test` is a separate env for isolation.
+
+```bash
+rspec
+```
+
+`FRAI_ENV=test` enables dry run: no LLM calls, no MCP connections.
+
+**Tasks** — `.call` returns the rendered prompt:
+
+```ruby
+RSpec.describe AnalyzeItem::Task do
+  it "includes the query in the prompt" do
+    result = described_class.call(query: "ruby gems")
+    expect(result).to include("ruby gems")
+  end
+end
+```
+
+**Agents** — `.call` returns a dry-run stub:
+
+```ruby
+RSpec.describe DataAnalysisAgent do
+  it "returns a stub without calling the LLM" do
+    result = described_class.call("Analyze the input.", payload: {})
+    expect(result).to start_with("[dry run]")
+  end
+end
+```
+
+---
+
+## CLI reference
+
+| Command | Alias | Description |
+|---|---|---|
+| `frai generate task NAME` | `frai gt` | Generate task |
+| `frai generate pipeline NAME` | `frai gp` | Generate pipeline |
+| `frai generate agent NAME` | `frai ga` | Generate agent |
+| `frai remove task NAME` | `frai rt` | Remove task |
+| `frai check` | — | Validate project |
+| `frai setup --claude` | `frai s --claude` | Claude CLI: MCPs + slash commands (optional) |
+| `frai setup --codex` | `frai s --codex` | Codex CLI: MCP registration (optional) |
+| `frai setup --cursor` | `frai s --cursor` | Cursor: `.cursor/mcp.json` (optional) |
+| `frai destroy` | — | Clean up before deleting project |
+| `frai list` | `frai l` | List everything |
+| `frai exec CLASS [INPUT]` | `frai e` | Execute task/pipeline/agent |
+| `frai exec ... --log PATH` | — | Execute with logging |
+| `frai console` | `frai c` | Interactive Ruby console |
+
+Input formats: see [Calling a task](#calling-a-task). Short form: `name(value)` pairs; Hash/Array as JSON or YAML inside `(...)`; plain string for pipelines/agents.
+
+---
+
+## Calling from Rails
+
+If this project lives inside a Rails app, load it from an initializer:
+
+```ruby
+# config/initializers/frai.rb
+require_relative Rails.root.join("lib/<%= @project_name %>/config/frai")
+```
+
+Then call from anywhere:
+
+```ruby
+result = Application.call(reviews: data, language: "en")
 ```
 
 ---
@@ -1010,291 +887,44 @@ end
 ## Removing a task
 
 ```bash
-frai rt analyze_item   # short for: frai remove task
+frai rt analyze_item   # removes tasks/analyze_item/ and .claude/commands/analyze_item.md
 ```
 
-Removes the task directory and `.claude/commands/analyze_item.md`.
+---
 
-## Destroying a project
-
-Before deleting the project directory, clean up external artifacts:
+## Destroying the project
 
 ```bash
-cd <%= @project_name %>
-frai destroy
+frai destroy           # unregisters MCPs from Claude/Codex, prunes .cursor/mcp.json
 cd ..
 rm -rf <%= @project_name %>
 ```
 
 ---
 
-## Project discovery
+## Troubleshooting
 
-`frai list` (alias: `frai l`) shows everything in the project at a glance:
-
-```
-Tasks:
-
-  # Fetches and analyzes data from an external source
-  analyze_item
-    params:
-      - query(required, String)
-      - lang(optional, String, default: "en")
-    mcp:
-      - database (http/oauth)
-      - search (stdio)
-    directives:
-      # Shared rules applied to all analyses
-      - guidelines
-    scripts:
-      # Fetches raw data from the external API
-      - fetch_data
-
-MCP servers:
-
-  # Hosted database MCP with OAuth
-  - database  HTTP/oauth
-      https://mcp.example.com/servers/abc123/mcp
-```
-
-### Adding descriptions
-
-**Task** — add `<desc>` tag at the top of `main.md.erb`:
-```erb
-<desc>Fetches and analyzes data from an external source</desc>
-
-You are an expert analyst...
-```
-
-**Sub-directive** — same `<desc>` tag in the directive file:
-```erb
-<desc>Shared rules applied to all analyses</desc>
-
-1) Always cite sources...
-```
-
-**Script** — `# desc:` comment at the top of the script (works for Ruby, Python, bash):
-```python
-# desc: Fetches raw data from the external API
-import sys, json
-...
-```
-
-**MCP server** — `desc` in the server definition:
-```ruby
-Frai::MCP.define :database do
-  desc "Hosted database MCP with OAuth"
-  url ENV["DATABASE_MCP_URL"]
-  oauth true
-end
-```
-
-**Pipeline / Agent** — `# desc:` comment before the class:
-```ruby
-# desc: Chains fetch and analysis tasks sequentially
-class AnalysisPipeline < BasePipeline
-  ...
-end
-```
-
----
-
-## Project validation
-
-`frai check` validates your project structure, ensuring that everything declared exists, and everything that exists is declared.
-
-It checks:
-1. Every task declares an output format (`output :text`, etc.)
-2. Every `use :directive` declared in a task evaluates to a real `.md.erb` file.
-3. Every `mcp :name` declared has a corresponding `mcp/name.rb` server definition.
-4. No **orphan directives**: every `.md.erb` file in `tasks/your_task/directives/` must be declared in `#use` or it raises an error.
-5. No **orphan scripts**: every script in `tasks/your_task/scripts/` must be declared in `#run` or it raises an error.
-
-If you create files and forget to reference them in `task.rb`, or declare references but forget to create the files, `frai check` will catch it.
-
----
-
-## Logging
-
-Write task output and errors to a log file — useful for cron jobs and automation:
-
-```bash
-frai exec AnalyzeItem::Task "query(some text)" --log logs/analyze.log
-```
-
-Directories are created automatically if they don't exist. Each entry includes a timestamp and status:
-
-```
-[2026-06-06 08:00:00] [SUCCESS]
-Analysis complete for query: some text...
-------------------------------------------------------------
-[2026-06-06 09:00:00] [ERROR]
-Error: MCP :database OAuth failed — token expired
-------------------------------------------------------------
-```
-
----
-
-## Testing with RSpec
-
-Frai projects include a `spec/` folder with a conventions spec out of the box. You can add your own specs there to test tasks, scripts, pipelines, and applications.
-
-### Setup
-
-Since `rspec` is a dependency of the `frai` gem itself, no separate `Gemfile` is needed. Generated projects include a pre-generated `spec/spec_helper.rb` — just run `rspec` from the project root.
-
-`spec/spec_helper.rb` is pre-generated:
-
-```ruby
-# spec/spec_helper.rb
-ENV["FRAI_ENV"] = "test"
-
-require_relative "../config/frai"
-
-RSpec.configure do |config|
-  config.after { Frai.reset! }
-end
-```
-
-`FRAI_ENV=test` ensures all MCP servers are skipped and the LLM is never called — tasks return the rendered prompt instead of making API requests.
-
-### Running specs
-
-```bash
-rspec
-```
-
-Run a single file:
-
-```bash
-rspec spec/tasks/code_review_spec.rb
-```
-
-Run a single example by line number:
-
-```bash
-rspec spec/tasks/code_review_spec.rb:12
-```
-
-### Testing a task
-
-```ruby
-# spec/tasks/code_review_spec.rb
-# frozen_string_literal: true
-require "spec_helper"
-
-RSpec.describe CodeReview::Task do
-  it "renders the prompt with given params", :aggregate_failures do
-    result = described_class.call(task_id: "PDB-123")
-
-    expect(result).to include("PDB-123")
-  end
-
-  it "raises on missing required param" do
-    expect { described_class.call(language: "english") }
-      .to raise_error(Frai::MissingParam, /task_id/)
-  end
-
-  it "raises on wrong param type" do
-    expect { described_class.call(task_id: 123) }
-      .to raise_error(Frai::InvalidParam, /expected String/)
-  end
-end
-```
-
-### Testing an application
-
-```ruby
-# spec/applications/application_spec.rb
-# frozen_string_literal: true
-require "spec_helper"
-
-RSpec.describe Application do
-  it "calls tasks in sequence and returns a result", :aggregate_failures do
-    result = described_class.call(reviews: [{ id: 1 }], language: "ru")
-
-    expect(result).to be_a(String)
-    expect(result).to include("reviews")
-  end
-end
-```
-
-### Testing a pipeline
-
-```ruby
-# spec/pipelines/review_pipeline_spec.rb
-# frozen_string_literal: true
-require "spec_helper"
-
-RSpec.describe ReviewPipeline do
-  it "chains tasks and returns final output" do
-    result = described_class.call("input data")
-
-    expect(result).to be_a(String)
-  end
-end
-```
-
-### Testing scripts in isolation
-
-Scripts are subprocesses that read JSON from stdin and write JSON to stdout — test them directly with `Open3`. Use a named `subject` and group related assertions with `:aggregate_failures`:
-
-```ruby
-# spec/scripts/fetch_data_spec.rb
-# frozen_string_literal: true
-require "json"
-require "open3"
-
-SCRIPT_PATH = File.expand_path("../tasks/code_review/scripts/fetch_data.rb", __dir__)
-
-def run_script(payload)
-  stdout, stderr, status = Open3.capture3("ruby", SCRIPT_PATH, stdin_data: JSON.generate(payload))
-  raise "Script failed:\n#{stderr}" unless status.success?
-
-  JSON.parse(stdout, symbolize_names: true)
-end
-
-RSpec.describe "fetch_data script" do
-  subject(:result) { run_script({ input: "PDB-123" }) }
-
-  it "returns expected keys", :aggregate_failures do
-    expect(result).to have_key(:diff)
-    expect(result[:diff]).to include("PDB-123")
-  end
-end
-```
-
-Scripts can be written in any language (Ruby, Python, bash) — the spec only cares about the JSON contract.
-
-### Key points
-
-| Concern | How it works in test |
+| Problem | Solution |
 |---|---|
-| LLM calls | Skipped — `FRAI_ENV=test` uses the Null adapter, returns rendered prompt |
-| MCP servers | Skipped entirely in test/development |
-| Scripts | Run as real subprocesses (they are standalone executables) |
-| `rspec` availability | Runtime dependency of frai — available after `gem install frai`, no separate Gemfile needed |
-| `Frai.reset!` | Resets configuration between tests — prevents state leakage |
-
+| `Directive 'task' not found` | Create `tasks/<name>/directives/task.md.erb` |
+| `MissingOutput` | Add `output :text` (or Hash/Schema) to `schema do` |
+| `UndeclaredDirective` / `UndeclaredScript` | Declare `use :x` / `run :x` in `schema do` |
+| `LLM_API_KEY is not set` | Set `LLM_API_KEY` when `LLM_MODEL` is set; or leave `LLM_MODEL` empty for CLI mode (tasks only) |
+| Agent fails without API key in production | Agents require `LLM_MODEL` and `LLM_API_KEY` — CLI mode applies to standalone tasks, not agents |
+| `agents cannot be nested` | Use `Frai::PromptTool` to call tasks, not other agents |
+| `Unsupported script extension` | Only `.rb`, `.py`, `.js`, `.sh` are supported |
+| `uninitialized constant MyTask` | Use `MyTask::Task` (not `MyTask`) with `frai exec` |
+| `rspec` not found | Run `gem install frai` — rspec is bundled |
+| `No MCP servers defined` | Normal if `mcp/` is empty — `frai setup --claude` still syncs slash commands; `--codex` / `--cursor` skip MCP registration |
+| Slash commands / MCPs missing after `git clone` | Run `frai setup --claude` / `--codex` / `--cursor` — client config is not in the repo |
 
 ---
 
-## CLI reference
+## Learn more
 
-| Command | Description |
-|---|---|
-| `frai new PROJECT_NAME` | Create a new project (`frai n`) |
-| `frai generate task NAME` | Generate a task + Claude CLI command (`frai gt`) |
-| `frai generate pipeline NAME` | Generate a pipeline (`frai gp`) |
-| `frai generate agent NAME` | Generate an agent (`frai ga`) |
-| `frai remove task NAME` | Remove a task and its Claude CLI command (`frai rt`) |
-| `frai check` | Validate project structure, task contracts, and MCP configurations |
-| `frai setup` | Register `mcp/*.rb` servers with Claude CLI (`frai s`) |
-| `frai destroy` | Clean up MCP servers and commands before deleting the project |
-| `frai list` | List all tasks, MCPs, pipelines, agents and shared directives (`frai l`) |
-| `frai exec CLASS_NAME [INPUT]` | Execute a task, pipeline, or agent (`frai e`) |
-| `frai exec ... --log PATH` | Execute and write output/errors to log file |
-| `frai console` | Interactive Ruby console with project loaded (`frai c`) |
+- [Frai documentation](https://github.com/aasmolsky/frai)
+- [RubyLLM](https://github.com/crmne/ruby_llm)
+- [Model Context Protocol](https://modelcontextprotocol.io/)
 
 ---
 

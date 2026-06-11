@@ -10,13 +10,24 @@ require "frai"
 # An agent uses RubyLLM's built-in tool-calling loop:
 # declare tools and instructions, the LLM decides what to call and when.
 #
-# Example:
-#   class ReviewsAgent < BaseAgent
-#     tools FetchReviews, ParseReviews
+# Declare a directive schema so `frai check` can validate directive files:
 #
-#     instructions  # loads from agents/reviews/directives/instructions.md.erb
+# @example
+#   class ReviewsAgent < BaseAgent
+#     inputs :payload
+#
+#     schema do
+#       directive :instructions  # agents/reviews/directives/instructions.md.erb
+#     end
+#
+#     instructions
+#
+#     tools do
+#       # [Frai::PromptTool.for(SomeTask), Frai::PromptTool.for(AnotherTask)]
+#       []
+#     end
 #   end
 #
-#   ReviewsAgent.call("Analyze place ChIJN1t_tDeuEmsRUsoyG83frY4")
+#   ReviewsAgent.call("Analyze the reviews.", payload: data)
 class BaseAgent < Frai::Agent
 end

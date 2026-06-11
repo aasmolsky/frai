@@ -33,7 +33,7 @@ RSpec.describe Frai::StructureChecker do
   end
 
   describe "#check!" do
-    context "when directive tree is missing main" do
+    context "when directive tree is missing task" do
       before do
         task_class.class_eval do
           schema { output :text }
@@ -43,14 +43,14 @@ RSpec.describe Frai::StructureChecker do
       it "raises MissingDirective" do
         expect { checker.check! }.to raise_error(
           Frai::MissingDirective,
-          /Directive 'main' not found/
+          /Directive 'task' not found/
         )
       end
     end
 
     context "when a sub-directive is missing" do
       before do
-        write_file("tasks/test/directives/main.md.erb")
+        write_file("tasks/test/directives/task.md.erb")
         task_class.class_eval do
           schema do
             use :missing_part
@@ -69,7 +69,7 @@ RSpec.describe Frai::StructureChecker do
 
     context "when a script is missing" do
       before do
-        write_file("tasks/test/directives/main.md.erb")
+        write_file("tasks/test/directives/task.md.erb")
         task_class.class_eval do
           schema do
             run :fetch_data do
@@ -90,7 +90,7 @@ RSpec.describe Frai::StructureChecker do
 
     context "when all files exist" do
       before do
-        write_file("tasks/test/directives/main.md.erb")
+        write_file("tasks/test/directives/task.md.erb")
         write_file("tasks/test/directives/header.md.erb")
         write_file("tasks/test/scripts/fetch_data.rb")
 
@@ -112,7 +112,7 @@ RSpec.describe Frai::StructureChecker do
 
     context "with an MCP server configured" do
       before do
-        write_file("tasks/test/directives/main.md.erb")
+        write_file("tasks/test/directives/task.md.erb")
         task_class.class_eval do
           schema do
             mcp :gitlab
@@ -143,7 +143,7 @@ RSpec.describe Frai::StructureChecker do
 
     context "when there is an orphan directive" do
       before do
-        write_file("tasks/test/directives/main.md.erb")
+        write_file("tasks/test/directives/task.md.erb")
         write_file("tasks/test/directives/orphan.md.erb")
         task_class.class_eval do
           schema do
@@ -162,7 +162,7 @@ RSpec.describe Frai::StructureChecker do
 
     context "when there is an orphan script" do
       before do
-        write_file("tasks/test/directives/main.md.erb")
+        write_file("tasks/test/directives/task.md.erb")
         write_file("tasks/test/scripts/orphan.rb")
         task_class.class_eval do
           schema do
@@ -176,6 +176,65 @@ RSpec.describe Frai::StructureChecker do
           Frai::Error,
           /Script `orphan` exists in .* but is not declared/
         )
+      end
+    end
+  end
+
+  describe ".check_global_directives_consistency!" do
+    subject(:check!) { described_class.check_global_directives_consistency!(@root) }
+
+    context "when directives/ folder does not exist" do
+      it "does not raise" do
+        expect { check! }.not_to raise_error
+      end
+    end
+
+    context "when all global directives are declared by a task" do
+      before do
+        write_file("directives/shared_context.md.erb")
+        task_class.class_eval do
+          schema do
+            use :shared_context
+            output :text
+          end
+        end
+        write_file("tasks/test/directives/task.md.erb")
+      end
+
+      it "does not raise" do
+        expect { check! }.not_to raise_error
+      end
+    end
+
+    context "when a global directive is not declared by any task" do
+      before do
+        write_file("directives/orphan_global.md.erb")
+      end
+
+      it "raises an Error indicating the file is unused" do
+        expect { check! }.to raise_error(
+          Frai::Error,
+          /directives\/orphan_global\.md\.erb is defined but never declared in any task/
+        )
+      end
+    end
+
+    context "when a global directive is used as a nested sub-directive" do
+      before do
+        write_file("directives/deep_shared.md.erb")
+        task_class.class_eval do
+          schema do
+            use :parent_section do
+              use :deep_shared
+            end
+            output :text
+          end
+        end
+        write_file("tasks/test/directives/task.md.erb")
+      end
+
+      it "does not raise" do
+        expect { check! }.not_to raise_error
       end
     end
   end

@@ -8,10 +8,10 @@ module Frai
   # The internal implementation — tasks, pipelines, agents — can change freely.
   #
   # @example
-  #   class Application < BaseApplication
+  #   class Application < Frai::Application
   #     def call(reviews:, language: "english")
-  #       data     = FetchDataTask.call(reviews)
-  #       response = AnalyzeTask.call(language: language, data: data)
+  #       data     = FetchData::Task.call(reviews)
+  #       response = Analyze::Task.call(language: language, data: data)
   #       response
   #     end
   #   end
@@ -33,4 +33,3 @@ module Frai
     end
   end
 end
-

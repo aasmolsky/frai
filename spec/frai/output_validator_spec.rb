@@ -24,7 +24,7 @@ RSpec.describe "Task output validation on instance" do
   around do |example|
     Dir.mktmpdir do |root|
       FileUtils.mkdir_p(File.join(root, "tasks", "score_reviews", "directives"))
-      File.write(File.join(root, "tasks", "score_reviews", "directives", "main.md.erb"), "Score reviews")
+      File.write(File.join(root, "tasks", "score_reviews", "directives", "task.md.erb"), "Score reviews")
 
       Frai.configure do |config|
         config.project_root = root

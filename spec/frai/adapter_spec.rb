@@ -16,9 +16,10 @@ RSpec.describe Frai::Task do
       end
     end
 
-    context "with model configured", :aggregate_failures do
+    context "with model configured in production", :aggregate_failures do
       before do
         Frai.configure do |c|
+          c.env     = :production
           c.model   = "claude-opus-4-6"
           c.api_key = "test-key"
         end

@@ -55,6 +55,17 @@ RSpec.describe Frai::MCP do
 
       expect(server.env_value).to eq({ "MY_VAR" => "value", "OTHER" => "thing" })
     end
+
+    it "supports bearer_env and url_env" do
+      described_class.define(:configured_server) do
+        url        "https://example.com"
+        url_env    "MCP_URL"
+        bearer_env "API_TOKEN"
+      end
+
+      expect(server.url_env_var).to eq("MCP_URL")
+      expect(server.bearer_env_var).to eq("API_TOKEN")
+    end
   end
 
   describe ".all" do
@@ -66,4 +77,3 @@ RSpec.describe Frai::MCP do
     end
   end
 end
-

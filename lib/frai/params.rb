@@ -1,9 +1,11 @@
+# frozen_string_literal: true
+
 module Frai
   # Holds param declarations for a task directive.
   # Used via the `params` DSL block inside a directive declaration.
   #
   # @example
-  #   directive :main do
+  #   directive :task do
   #     params do
   #       required :name,     String
   #       required :category, String
@@ -87,26 +89,10 @@ module Frai
     private
 
     def validate_hash_schema!(hash, schema, param_name, task_class)
-      # dry-schema / dry-validation contract — any object responding to .call
-      if schema.respond_to?(:call)
-        result = schema.call(hash)
-        unless result.success?
-          raise Frai::InvalidParam,
-            ":#{param_name} validation failed (#{task_class}): #{result.errors.to_h}"
-        end
-        return
-      end
-
-      # Built-in block DSL: { key: Type, ... }
-      schema.each do |key, type|
-        unless hash.key?(key)
-          raise Frai::MissingParam,
-            "required key :#{key} missing in :#{param_name} (#{task_class})"
-        end
-        unless hash[key].is_a?(type)
-          raise Frai::InvalidParam,
-            ":#{param_name}[:#{key}] expected #{type}, got #{hash[key].class} (#{task_class})"
-        end
+      result = schema.call(hash)
+      unless result.success?
+        raise Frai::InvalidParam,
+          ":#{param_name} validation failed (#{task_class}): #{result.errors.to_h}"
       end
     end
   end

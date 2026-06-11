@@ -18,13 +18,13 @@ module Frai
   #
   # Conditional logic:
   #
-  #   % if calculated_sum > max_issues
+  #   % if calculated_sum > max_items
   #     <%= use("high_value") %>
   #   % end
   #
   # Variables (params, constants, script/directive results):
   #
-  #   <%= task_id %>   <%= diff %>   <%= max_issues %>
+  #   <%= query %>   <%= context %>   <%= max_items %>
   #
   class DirectiveRenderer
     # Handles use(:name).with(:input).and_return(:ivar) chains.
@@ -168,7 +168,7 @@ module Frai
     # @param input [Hash, String, nil]
     # @return [String] rendered prompt
     def render(_declaration, input)
-      path = find_directive!(:main)
+      path = find_directive!(@declaration&.name || :task)
       ctx  = build_context(input)
       inject_helpers(ctx)
       strip_desc_tags(render_file(path, ctx))
@@ -185,7 +185,7 @@ module Frai
     end
 
     def strip_desc_tags(text)
-      text.gsub(/<desc>.*?<\/desc>\n?/m, "").lstrip
+      text.gsub(%r{<desc>.*?</desc>\n?}m, "").lstrip
     end
 
     def build_context(input)
@@ -209,6 +209,27 @@ module Frai
       ctx.define_singleton_method(name) { instance_variable_get(:"@#{name}") }
     end
 
+    # Applies opts to a DirectiveCall or ScriptCall, returning the configured call.
+    # Extracted to avoid duplicating the same case/when block for both `use` and `run`.
+    def apply_call_opts(call, opts, ctx)
+      case opts
+      when nil    then call
+      when Symbol then call.with(opts)
+      when Hash
+        if opts.key?(:params) || opts.key?(:return)
+          input = DirectiveRenderer.resolve_params(opts[:params], ctx)
+          call  = call.with(input) if input
+          opts[:return] ? call.and_return(opts[:return]) : call
+        else
+          input_spec, output_key = opts.first
+          input = input_spec.is_a?(Hash) \
+            ? input_spec.transform_values { |v| v.is_a?(Symbol) ? ctx.instance_variable_get(:"@#{v}") : v }
+            : input_spec
+          call.with(input).and_return(output_key)
+        end
+      end
+    end
+
     def inject_helpers(ctx)
       renderer    = self
       runner      = @script_runner
@@ -220,22 +241,7 @@ module Frai
         end
 
         call = DirectiveRenderer::DirectiveCall.new(renderer, name.to_sym, self)
-        case opts
-        when nil    then call
-        when Symbol then call.with(opts)
-        when Hash
-          if opts.key?(:params) || opts.key?(:return)
-            input = DirectiveRenderer.resolve_params(opts[:params], self)
-            call  = call.with(input) if input
-            opts[:return] ? call.and_return(opts[:return]) : call
-          else
-            input_spec, output_key = opts.first
-            input = input_spec.is_a?(Hash) \
-              ? input_spec.transform_values { |v| v.is_a?(Symbol) ? instance_variable_get(:"@#{v}") : v }
-              : input_spec
-            call.with(input).and_return(output_key)
-          end
-        end
+        renderer.send(:apply_call_opts, call, opts, self)
       end
 
       ctx.define_singleton_method(:run) do |name, opts = nil|
@@ -245,34 +251,14 @@ module Frai
 
         script_decl = declaration&.all_script_declarations&.[](name.to_sym)
         call = DirectiveRenderer::ScriptCall.new(runner, name.to_sym, self, script_decl)
-        case opts
-        when nil    then call
-        when Symbol then call.with(opts)
-        when Hash
-          if opts.key?(:params) || opts.key?(:return)
-            input = DirectiveRenderer.resolve_params(opts[:params], self)
-            call  = call.with(input) if input
-            opts[:return] ? call.and_return(opts[:return]) : call
-          else
-            input_spec, output_key = opts.first
-            input = input_spec.is_a?(Hash) \
-              ? input_spec.transform_values { |v| v.is_a?(Symbol) ? instance_variable_get(:"@#{v}") : v }
-              : input_spec
-            call.with(input).and_return(output_key)
-          end
-        end
+        renderer.send(:apply_call_opts, call, opts, self)
       end
     end
 
     def self.resolve_params(input_spec, ctx)
-      case input_spec
-      when Array
-        input_spec.each_with_object({}) { |k, h| h[k] = ctx.instance_variable_get(:"@#{k}") }
-      when Symbol, Hash, NilClass
-        input_spec
-      else
-        input_spec
-      end
+      return input_spec unless input_spec.is_a?(Array)
+
+      input_spec.each_with_object({}) { |k, h| h[k] = ctx.instance_variable_get(:"@#{k}") }
     end
 
     def render_file(path, ctx)
@@ -291,7 +277,8 @@ module Frai
 
       raise Frai::MissingDirective,
         "Directive '#{name}' not found.\n" \
-        "Expected: tasks/#{@task_name}/directives/#{name}.md.erb"
+        "Expected: tasks/#{@task_name}/directives/#{name}.md.erb\n" \
+        "      or: directives/#{name}.md.erb"
     end
   end
 end

@@ -1,10 +1,12 @@
+# frozen_string_literal: true
+
 require "fileutils"
-require "erb"
+require_relative "base_generator"
 
 module Frai
   module Generators
-    class NewGenerator
-      TEMPLATES_DIR = File.expand_path("../templates", __FILE__)
+    class NewGenerator < BaseGenerator
+      TEMPLATES_DIR = File.expand_path("templates", __dir__)
 
       def initialize(project_name)
         @project_name = project_name
@@ -21,9 +23,7 @@ module Frai
       private
 
       def check_target_dir
-        if Dir.exist?(@target_dir)
-          abort "Error: directory '#{@project_name}' already exists."
-        end
+        abort "Error: directory '#{@project_name}' already exists." if Dir.exist?(@target_dir)
       end
 
       def create_directories
@@ -72,6 +72,7 @@ module Frai
         File.write(dest, result)
       end
 
+      # Override: prefix every path with the project name for clarity.
       def say_create(path)
         puts "  \e[32mcreate\e[0m  #{@project_name}/#{path}"
       end
@@ -82,7 +83,11 @@ module Frai
         puts ""
         puts "  Next steps:"
         puts "    cd #{@project_name}"
-        puts "    frai console"
+        puts "    cp .env.example .env     # fill in your API keys"
+        puts "    frai setup --claude      # optional: Claude CLI (MCPs + slash commands)"
+        puts "    frai setup --codex       # optional: Codex CLI (MCP registration)"
+        puts "    frai setup --cursor      # optional: Cursor (.cursor/mcp.json)"
+        puts "    frai gt my_first_task    # generate your first task"
         puts ""
       end
     end

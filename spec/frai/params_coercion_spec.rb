@@ -50,9 +50,8 @@ RSpec.describe "CLI arguments processing in Task" do
       expect(result[:place_data]).to eq({ "id" => "abc", "score" => 42 })
     end
 
-    it "coerces Ruby Hash strings to Hash via eval" do
-      # Note: eval is intentionally used for CLI single-quote convenience e.g.: '{id: 123}'
-      input = { place_data: "{ 'id' => 123 }" }
+    it "coerces YAML-style hash strings to Hash" do
+      input = { place_data: "{id: 123}" }
       result = instance.send(:coerce_string_params, declaration.params_declaration, input)
       expect(result[:place_data]).to eq({ "id" => 123 })
     end

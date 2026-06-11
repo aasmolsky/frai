@@ -1,35 +1,46 @@
 # frozen_string_literal: true
 
-require "tmpdir"
 require "spec_helper"
-require "frai"
+require "tmpdir"
+require "fileutils"
 
 RSpec.describe Frai::StructureChecker do
-  let(:project_root) { Dir.mktmpdir }
-  before do
-    allow(Frai.configuration).to receive(:project_root).and_return(project_root)
+  after { Frai.reset! }
+
+  around do |example|
+    Dir.mktmpdir do |root|
+      @root = root
+      Frai.configure { |c| c.project_root = root }
+      example.run
+    end
   end
-  after do
-    FileUtils.remove_entry(project_root)
+
+  def write_file(path)
+    full_path = File.join(@root, path)
+    FileUtils.mkdir_p(File.dirname(full_path))
+    File.write(full_path, "")
   end
-  it "raises MissingOutput if schema is not declared at all" do
-    class TaskWithoutSchema < Frai::Task
+
+  it "raises MissingOutput when schema is not declared" do
+    task_class = Class.new(Frai::Task) do
       def self.task_name; "task_without_schema"; end
     end
+
     expect {
-      Frai::StructureChecker.new(TaskWithoutSchema).check!
+      described_class.new(task_class).check!
     }.to raise_error(Frai::MissingOutput, /must declare an output type/)
   end
-  it "does not raise if output is declared" do
-    class TaskWithSchema < Frai::Task
+
+  it "does not raise when output is declared and task.md.erb exists" do
+    task_class = Class.new(Frai::Task) do
       def self.task_name; "task_with_schema"; end
       schema { output :text }
     end
-    # Needs a main.md.erb to pass
-    FileUtils.mkdir_p(File.join(project_root, "tasks", "task_with_schema", "directives"))
-    File.write(File.join(project_root, "tasks", "task_with_schema", "directives", "main.md.erb"), "")
+
+    write_file("tasks/task_with_schema/directives/task.md.erb")
+
     expect {
-      Frai::StructureChecker.new(TaskWithSchema).check!
+      described_class.new(task_class).check!
     }.not_to raise_error
   end
 end

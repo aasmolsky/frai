@@ -27,7 +27,7 @@ RSpec.describe "Task structured output with retries" do
   around do |example|
     Dir.mktmpdir do |root|
       FileUtils.mkdir_p(File.join(root, "tasks", "score_reviews", "directives"))
-      File.write(File.join(root, "tasks", "score_reviews", "directives", "main.md.erb"), "Score reviews")
+      File.write(File.join(root, "tasks", "score_reviews", "directives", "task.md.erb"), "Score reviews")
 
       File.write(
         File.join(root, "tasks", "score_reviews", "task.rb"),

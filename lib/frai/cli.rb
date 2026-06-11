@@ -1,7 +1,11 @@
+# frozen_string_literal: true
+
 require "thor"
 require "fileutils"
 require "json"
 require "erb"
+require_relative "setup/mcp"
+require_relative "generators/base_generator"
 require_relative "generators/new_generator"
 require_relative "generators/task_generator"
 require_relative "generators/task_remover"
@@ -39,7 +43,7 @@ module Frai
       generator.new(name).generate
     end
 
-    desc "destroy", "Remove all MCP servers and Claude CLI commands for this project"
+    desc "destroy", "Unregister MCP servers and remove client artifacts for this project"
     long_desc <<~DESC
       Cleans up all external artifacts before deleting the project directory.
       Run from inside the project, then delete the directory manually.
@@ -56,14 +60,18 @@ module Frai
     desc "check", "Validate project structure, task contracts, and MCP configurations"
     def check
       load_project!
-      
+
       errors = []
       task_classes.each do |klass|
-        begin
-          Frai::StructureChecker.new(klass).check!
-        rescue Frai::Error => e
-          errors << e.message
-        end
+        Frai::StructureChecker.new(klass).check!
+      rescue Frai::Error => e
+        errors << e.message
+      end
+
+      agent_classes.each do |klass|
+        Frai::AgentStructureChecker.new(klass).check!
+      rescue Frai::Error => e
+        errors << e.message
       end
 
       if errors.empty?
@@ -84,7 +92,7 @@ module Frai
         task      = klass.task_name
         decl      = klass._directive_declaration
         root      = Frai.configuration.project_root
-        task_desc = read_directive_desc(root, task, :main)
+        task_desc = read_directive_desc(root, task, decl&.name || :task)
 
         puts "  # #{task_desc}" if task_desc
         puts "  #{task}"
@@ -98,24 +106,18 @@ module Frai
         puts
       end
 
-      pipelines = ObjectSpace.each_object(Class)
-                             .select { |k| k < Frai::Pipeline && k.name && k.superclass != Frai::Pipeline }
-                             .sort_by(&:name)
-      unless pipelines.empty?
+      unless pipeline_classes.empty?
         puts "Pipelines:\n"
-        pipelines.each do |klass|
+        pipeline_classes.each do |klass|
           desc = read_class_desc(klass)
           puts desc ? "  #{klass.name} — #{desc}" : "  #{klass.name}"
         end
         puts
       end
 
-      agents = ObjectSpace.each_object(Class)
-                          .select { |k| k < Frai::Agent && k.name && k.superclass != Frai::Agent }
-                          .sort_by(&:name)
-      unless agents.empty?
+      unless agent_classes.empty?
         puts "Agents:\n"
-        agents.each do |klass|
+        agent_classes.each do |klass|
           desc = read_class_desc(klass)
           puts desc ? "  #{klass.name} — #{desc}" : "  #{klass.name}"
         end
@@ -134,7 +136,7 @@ module Frai
       puts
     end
 
-    desc "remove task TASK_NAME", "Remove a task and its Claude CLI command"
+    desc "remove task TASK_NAME", "Remove a task and its slash command (if present)"
     def remove(type, task_name)
       abort "Error: unknown type '#{type}'. Use: task" unless type == "task"
       Frai::Generators::TaskRemover.new(task_name).remove
@@ -143,17 +145,17 @@ module Frai
     desc "exec CLASS_NAME [INPUT]", "Execute a task, pipeline or agent"
     long_desc <<~DESC
       Runs a task from the current project. INPUT can be:
-        - a plain string: frai exec AnalyzeItemTask "some text"
-        - key:value pairs: frai exec CodeReviewTask task_number:PDB-111
-        - name(value) format: frai exec CodeReviewTask "task_number(PDB-111)"
+        - a plain string: frai exec AnalyzeItem::Task "some text"
+        - key:value pairs: frai exec AnalyzeItem::Task query:hello
+        - name(value) format: frai exec AnalyzeItem::Task "query(hello world)"
 
       Use --log to write output and errors to a file (directories created automatically):
-        frai exec CodeReviewTask "task_id(PDB-111)" --log logs/reviews.log
+        frai exec AnalyzeItem::Task "query(hello)" --log logs/run.log
 
       Examples:
-        frai exec AnalyzeItemTask "some input"
-        frai exec CodeReviewTask task_number:PDB-111
-        frai exec SumNumbersTask "input_numbers(1,2,3)"
+        frai exec AnalyzeItem::Task "query(hello world)"
+        frai exec AnalyzeItem::Task query:hello
+        frai exec SumNumbers::Task "input_numbers(1,2,3)"
     DESC
     option :log, type: :string, desc: "Path to log file (created if missing)"
     def exec(class_name, input = nil)
@@ -185,36 +187,49 @@ module Frai
       msg = "Error: #{e.message}"
       log_message(log_path, msg, success: false)
       abort msg
-    rescue => e
+    rescue StandardError => e
       msg = "Error: #{e.message}"
       log_message(log_path, msg, success: false)
       abort msg
     end
 
-    desc "setup", "Register all project MCP servers with Claude CLI and Codex"
+    desc "setup", "Configure external integrations (optional — only for specific clients)"
     long_desc <<~DESC
-      Reads mcp/*.rb files and registers each defined server with Claude CLI.
-      Run once after cloning the project or adding new MCP definitions.
+      Configures third-party clients to use this project's MCP servers and tasks.
 
-      Example:
-        frai setup
+      API mode does not need setup — Frai reads mcp/*.rb directly at runtime.
+
+      Targets:
+        --claude   Claude CLI: register MCP servers + slash commands for tasks
+        --codex    Codex CLI: register MCP servers
+        --cursor   Cursor: write .cursor/mcp.json from mcp/*.rb
+
+      Examples:
+        frai setup --claude
+        frai setup --codex --cursor
     DESC
+    option :claude, type: :boolean, desc: "Claude CLI: MCPs + slash commands"
+    option :codex,  type: :boolean, desc: "Codex CLI: MCP registration"
+    option :cursor, type: :boolean, desc: "Cursor: .cursor/mcp.json"
     def setup
-      load_project!
-      load_mcps!
+      unless options[:claude] || options[:codex] || options[:cursor]
+        abort <<~MSG
+          Error: specify a setup target.
 
-      servers = Frai::MCP.all
-      abort "No MCP servers defined in mcp/. Add definitions and try again." if servers.empty?
+            frai setup --claude   # Claude CLI: MCPs + slash commands
+            frai setup --codex    # Codex CLI: MCP registration
+            frai setup --cursor   # Cursor: .cursor/mcp.json
 
-      servers.each do |server|
-        register_mcp(server)
+          Combine targets: frai setup --claude --cursor
+        MSG
       end
 
-      allow_mcp_permissions(servers)
-      sync_commands
+      load_project!
+      servers = Frai::MCP.all
 
-      puts ""
-      puts "  \e[32m✓\e[0m Setup complete. Restart Claude CLI to apply."
+      setup_claude(servers) if options[:claude]
+      setup_codex(servers)  if options[:codex]
+      setup_cursor(servers) if options[:cursor]
     end
 
     desc "console", "Start an interactive console with the project loaded"
@@ -257,6 +272,18 @@ module Frai
                  .sort_by(&:name)
     end
 
+    def agent_classes
+      ObjectSpace.each_object(Class)
+                 .select { |k| k < Frai::Agent && k.name && k.superclass != Frai::Agent }
+                 .sort_by(&:name)
+    end
+
+    def pipeline_classes
+      ObjectSpace.each_object(Class)
+                 .select { |k| k < Frai::Pipeline && k.name && k.superclass != Frai::Pipeline }
+                 .sort_by(&:name)
+    end
+
     def params_array(decl)
       return [] unless decl
       required = decl.required_params.map { |n, t| "#{n}(required, #{t})" }
@@ -265,15 +292,6 @@ module Frai
         "#{n}(optional, #{o[:type]}#{default})"
       }
       required + optional
-    end
-
-    def format_params(decl)
-      params_array(decl).join(", ")
-    end
-
-    def format_directives(decl)
-      return "" unless decl
-      decl.sub_directives.keys.map(&:to_s).join(", ")
     end
 
     def print_directives(decl, root, task_name)
@@ -286,58 +304,6 @@ module Frai
         puts "      # #{desc}" if desc
         puts "      - #{name}"
       end
-    end
-
-    def format_scripts(decl)
-      return "" unless decl
-      collect_scripts(decl).map(&:to_s).join(", ")
-    end
-
-    # Extract # desc: from a Ruby class file (pipeline, agent)
-    def read_class_desc(klass)
-      path = klass.instance_method(:call).source_location&.first rescue nil
-      return nil unless path && File.exist?(path)
-      File.foreach(path).first(10).each do |line|
-        m = line.match(/^\s*#\s*desc:\s*(.+)/)
-        return m[1].strip if m
-      end
-      nil
-    rescue
-      nil
-    end
-
-    # Extract <desc>...</desc> from a directive template
-    def read_directive_desc(root, task_name, directive_name)
-      candidates = task_name ? [
-        File.join(root, "tasks", task_name, "directives", "#{directive_name}.md.erb"),
-        File.join(root, "tasks", task_name, "directives", "#{directive_name}.erb")
-      ] : []
-      candidates += [File.join(root, "directives", "#{directive_name}.md.erb")]
-      path = candidates.find { |p| File.exist?(p) }
-      return nil unless path
-      content = File.read(path)
-      m = content.match(/<desc>(.*?)<\/desc>/m)
-      m ? m[1].strip : nil
-    rescue
-      nil
-    end
-
-    # Extract # desc: from a script file
-    def read_script_desc(path)
-      return nil unless File.exist?(path)
-      File.foreach(path).first(5).each do |line|
-        m = line.match(/^\s*#\s*desc:\s*(.+)/)
-        return m[1].strip if m
-      end
-      nil
-    rescue
-      nil
-    end
-
-    def print_list(label, items)
-      return if items.empty?
-      puts "    #{label}:"
-      items.each { |i| puts "      - #{i}" }
     end
 
     def print_scripts(decl, root, task_name)
@@ -359,6 +325,53 @@ module Frai
       names.uniq
     end
 
+    # Extract # desc: from a Ruby class file (pipeline, agent)
+    def read_class_desc(klass)
+      path = klass.instance_method(:call).source_location&.first rescue nil
+      return nil unless path && File.exist?(path)
+      File.foreach(path).first(10).each do |line|
+        m = line.match(/^\s*#\s*desc:\s*(.+)/)
+        return m[1].strip if m
+      end
+      nil
+    rescue StandardError
+      nil
+    end
+
+    # Extract <desc>...</desc> from a directive template
+    def read_directive_desc(root, task_name, directive_name)
+      candidates = task_name ? [
+        File.join(root, "tasks", task_name, "directives", "#{directive_name}.md.erb"),
+        File.join(root, "tasks", task_name, "directives", "#{directive_name}.erb")
+      ] : []
+      candidates += [File.join(root, "directives", "#{directive_name}.md.erb")]
+      path = candidates.find { |p| File.exist?(p) }
+      return nil unless path
+      content = File.read(path)
+      m = content.match(/<desc>(.*?)<\/desc>/m)
+      m ? m[1].strip : nil
+    rescue StandardError
+      nil
+    end
+
+    # Extract # desc: from a script file
+    def read_script_desc(path)
+      return nil unless File.exist?(path)
+      File.foreach(path).first(5).each do |line|
+        m = line.match(/^\s*#\s*desc:\s*(.+)/)
+        return m[1].strip if m
+      end
+      nil
+    rescue StandardError
+      nil
+    end
+
+    def print_list(label, items)
+      return if items.empty?
+      puts "    #{label}:"
+      items.each { |i| puts "      - #{i}" }
+    end
+
     def log_message(path, message, success:)
       return unless path
       timestamp = Time.now.strftime("%Y-%m-%d %H:%M:%S")
@@ -370,12 +383,63 @@ module Frai
       end
     end
 
+    def setup_claude(servers)
+      if servers.empty?
+        puts "  \e[33mskip\e[0m    No MCP servers in mcp/ — skipping MCP registration"
+      else
+        servers.each { |server| register_mcp_claude(server) }
+        verify_client_mcp_registration!("claude", servers)
+      end
+
+      allow_mcp_permissions(servers)
+      sync_commands
+
+      puts ""
+      puts "  \e[32m✓\e[0m Claude CLI setup complete. Restart Claude CLI to apply."
+    end
+
+    def setup_codex(servers)
+      if servers.empty?
+        puts "  \e[33mskip\e[0m    No MCP servers in mcp/ — nothing to register"
+      else
+        servers.each { |server| register_mcp_codex(server) }
+        verify_client_mcp_registration!("codex", servers)
+      end
+
+      puts ""
+      puts "  \e[32m✓\e[0m Codex CLI setup complete. Restart Codex to apply."
+    end
+
+    def setup_cursor(servers)
+      if servers.empty?
+        puts "  \e[33mskip\e[0m    No MCP servers in mcp/ — nothing to configure"
+      else
+        sync_cursor_mcp(servers)
+      end
+
+      puts ""
+      puts "  \e[32m✓\e[0m Cursor setup complete. Reload MCP servers in Cursor settings."
+    end
+
+    def verify_client_mcp_registration!(client, servers)
+      return if servers.empty?
+
+      registered = Frai::Setup::Mcp.list_client_servers(client)
+
+      servers.each do |server|
+        next if Frai::Setup::Mcp.registered?(registered, server.name)
+
+        warn "  \e[33mwarn\e[0m    MCP :#{server.name} is not listed in `#{client} mcp list` — registration may have failed"
+      end
+    end
+
     def load_project!
       config = File.join(Dir.pwd, "config", "frai.rb")
       abort "Error: config/frai.rb not found. Are you inside a Frai project?" unless File.exist?(config)
       require config
       load_mcps!
       Frai::StructureChecker.check_mcp_consistency!(Dir.pwd)
+      Frai::StructureChecker.check_global_directives_consistency!(Dir.pwd)
     rescue Frai::Error => e
       abort "Error: #{e.message}"
     end
@@ -383,7 +447,7 @@ module Frai
     def allow_mcp_permissions(servers)
       settings_file = File.join(Dir.pwd, ".claude", "settings.local.json")
       FileUtils.mkdir_p(File.dirname(settings_file))
-      settings = File.exist?(settings_file) ? JSON.parse(File.read(settings_file)) : {}
+      settings = Frai::Setup::Mcp.parse_json_file(settings_file, label: ".claude/settings.local.json")
       settings["permissions"] ||= {}
       settings["permissions"]["allow"] ||= []
 
@@ -404,69 +468,80 @@ module Frai
     end
 
     def sync_commands
-      tasks_dir    = File.join(Dir.pwd, "tasks")
-      commands_dir = File.join(Dir.pwd, ".claude", "commands")
-      templates    = File.expand_path("../generators/templates/commands", __FILE__)
-
-      Dir.glob(File.join(tasks_dir, "*/task.rb")).each do |task_file|
-        @name        = File.basename(File.dirname(task_file))
-        @module_name = @name.split("_").map(&:capitalize).join
-        @qualified_class_name = "#{@module_name}::Task"
-        command_file = File.join(commands_dir, "#{@name}.md")
-        next if File.exist?(command_file)
-
-        FileUtils.mkdir_p(commands_dir)
-        src    = File.join(templates, "task.md.erb")
-        result = ERB.new(File.read(src), trim_mode: "-").result(binding)
-        File.write(command_file, result)
-        puts "  \e[32mcreate\e[0m  .claude/commands/#{@name}.md"
-      end
+      Frai::Setup::Commands.sync!(
+        root:          Dir.pwd,
+        task_classes:  task_classes,
+        template_path: File.expand_path("generators/templates/commands/task.md.erb", __dir__)
+      )
     end
 
     def load_mcps!
       Dir[File.join(Dir.pwd, "mcp", "*.rb")].each { |f| require f }
     end
 
-    def register_mcp(server)
-      if server.type == :http && server.url_value.to_s.strip.empty?
-        puts "  \e[33mskip\e[0m    #{server.name} — URL not set (check your .env)"
-        return
+    def register_mcp_claude(server)
+      argv = Frai::Setup::Mcp.claude_argv(server)
+      return report_skip(argv) if argv.is_a?(Frai::Setup::Mcp::Skip)
+
+      Frai::Setup::Mcp.run_register(argv, server_name: server.name, server_type: server.type)
+    end
+
+    def register_mcp_codex(server)
+      Frai::Setup::Mcp.codex_notes(server).each do |note|
+        puts "  \e[33mnote\e[0m    #{server.name} — #{note}"
       end
 
-      if server.type == :stdio && server.command_value.to_s.strip.empty?
-        puts "  \e[33mskip\e[0m    #{server.name} — command not set (check your .env)"
-        return
-      end
+      argv = Frai::Setup::Mcp.codex_argv(server)
+      return report_skip(argv) if argv.is_a?(Frai::Setup::Mcp::Skip)
 
-      cmd = if server.type == :http
-        ["claude", "mcp", "add", "--scope", "local",
-         "--transport", "http",
-         server.name.to_s, server.url_value].join(" ")
-      else
-        env_args  = server.env_value.flat_map { |k, v| ["-e", "#{k}=#{v}"] }
-        cmd_parts = [server.command_value] + server.args_value.map do |a|
-          a.start_with?("~", "/") ? File.expand_path(a) : a
+      Frai::Setup::Mcp.run_register(argv, server_name: server.name, server_type: server.type)
+    end
+
+    def report_skip(skip)
+      puts "  \e[33mskip\e[0m    #{skip.server.name} — #{skip.reason}"
+    end
+
+    def sync_cursor_mcp(servers)
+      root     = Dir.pwd
+      mcp_file = File.join(root, ".cursor", "mcp.json")
+      existing = Frai::Setup::Mcp.parse_json_file(mcp_file, label: ".cursor/mcp.json")
+      state    = Frai::Setup::Mcp.load_state(root)
+
+      managed_before = state["cursor_mcp"] || []
+      current_names  = servers.map { |s| s.name.to_s }
+
+      config, configured, skipped = Frai::Setup::Mcp.build_cursor_config(existing, servers)
+      skipped.each { |s| report_skip(s) }
+
+      configured.each do |name|
+        server = servers.find { |s| s.name.to_s == name }
+        Frai::Setup::Mcp.cursor_notes(server).each do |note|
+          puts "  \e[33mnote\e[0m    #{server.name} — #{note}"
         end
-        ["claude", "mcp", "add", "--scope", "local",
-         server.name.to_s, *env_args, "--", *cmd_parts].join(" ")
+        puts "  \e[32mconfigure\e[0m #{server.name} (#{server.type})"
       end
 
-      puts "  \e[33mregistering\e[0m #{server.name} (#{server.type})"
-      output = `#{cmd} 2>&1`
-      if $?.success?
-        puts "  \e[32m✓\e[0m #{server.name} registered"
-      elsif output.include?("already exists")
-        puts "  \e[32m✓\e[0m #{server.name} already registered"
-      else
-        puts "  \e[31mwarn\e[0m    Failed: #{output.strip}"
+      removed = (managed_before - current_names).size
+      if configured.empty? && removed.zero?
+        puts "  \e[33mskip\e[0m    No MCP servers configured — .cursor/mcp.json unchanged"
+        return
       end
+
+      Frai::Setup::Mcp.prune_cursor_orphans!(config, managed_before, current_names)
+
+      FileUtils.mkdir_p(File.dirname(mcp_file))
+      File.write(mcp_file, JSON.pretty_generate(config) + "\n")
+      puts "  \e[32mupdate\e[0m  .cursor/mcp.json (#{configured.size} configured, #{removed} orphan(s) removed)"
+
+      state["cursor_mcp"] = current_names
+      Frai::Setup::Mcp.save_state(root, state)
     end
 
     # Parses input string into a Hash or returns as-is.
     #
     # Supports:
     #   "key(value) key2(value2)"  → { key: "value", key2: "value2" }
-    #   "key({hash}) key2([arr])"  → { key: Hash, key2: Array }  (Ruby literals eval'd)
+    #   "key({hash}) key2([arr])"  → { key: Hash, key2: Array }  (JSON or YAML)
     #   "key:value key2:value2"    → { key: "value", key2: "value2" }
     #   "plain string"             → "plain string"
     #   nil                        → nil
@@ -521,25 +596,8 @@ module Frai
       pairs
     end
 
-    # Coerces a string value to a Ruby Hash or Array when it looks like one.
-    # Uses eval so that Ruby-style literals (symbol keys, single-quoted strings)
-    # are handled correctly. Safe here because input comes from the local CLI.
     def coerce_value(str)
-      stripped = str.strip
-      return stripped unless stripped.start_with?("{", "[")
-
-      begin
-        result = eval(stripped) # rubocop:disable Security/Eval
-        return result if result.is_a?(Hash) || result.is_a?(Array)
-      rescue SyntaxError, StandardError
-        # fall through to JSON attempt
-      end
-
-      begin
-        JSON.parse(stripped)
-      rescue JSON::ParserError
-        stripped
-      end
+      Frai::ParamCoercion.parse(str)
     end
   end
 end

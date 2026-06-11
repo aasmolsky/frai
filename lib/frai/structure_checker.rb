@@ -20,10 +20,36 @@ module Frai
       decl = @task_class._directive_declaration
       return unless decl
 
-      find_directive!(:main)
+      find_directive!(decl.name)
       check_declaration!(decl)
       check_mcp_declarations!
       check_orphan_files!(decl)
+    end
+
+    # Validates that all files in the global directives/ folder
+    # are declared by at least one task via `use :name` inside `directive :task do`.
+    def self.check_global_directives_consistency!(project_root)
+      global_dir = File.join(project_root, "directives")
+      return unless Dir.exist?(global_dir)
+
+      defined = Dir.glob(File.join(global_dir, "*.md.erb"))
+                   .map { |f| File.basename(f, ".md.erb").to_sym }
+
+      return if defined.empty?
+
+      declared = ObjectSpace.each_object(Class)
+                            .select { |k| k < Frai::Task && k.name }
+                            .flat_map { |k| k._directive_declaration&.all_directive_names || [] }
+                            .map(&:to_sym)
+                            .uniq
+
+      defined.each do |name|
+        unless declared.include?(name)
+          raise Frai::Error,
+            "directives/#{name}.md.erb is defined but never declared in any task.\n" \
+            "Add `use :#{name}` inside `directive :task do` in the task that uses it, or remove the file."
+        end
+      end
     end
 
     # Validates declared MCPs have corresponding mcp/*.rb definitions,
@@ -80,25 +106,25 @@ module Frai
       if Dir.exist?(directives_dir)
         Dir.glob(File.join(directives_dir, "*.{md.erb,erb}")).each do |file|
           name = File.basename(file).sub(/\.md\.erb$/, "").sub(/\.erb$/, "").to_sym
-          next if name == :main
+          next if name == decl.name
           unless decl.all_directive_names.include?(name)
             raise Frai::Error,
               "Directive `#{name}` exists in #{directives_dir} but is not declared in #{@task_class} schema.\n" \
-              "Add `use :#{name}` inside `schema do` or delete the file."
+              "Add `use :#{name}` inside `directive :task do` or delete the file."
           end
         end
       end
 
       scripts_dir = File.join(@project_root, "tasks", @task_name, "scripts")
-      if Dir.exist?(scripts_dir)
-        Dir.glob(File.join(scripts_dir, "*")).each do |file|
-          next if File.directory?(file)
-          name = File.basename(file, File.extname(file)).to_sym
-          unless decl.all_script_names.include?(name)
-            raise Frai::Error,
-              "Script `#{name}` exists in #{scripts_dir} but is not declared in #{@task_class} schema.\n" \
-              "Add `run :#{name}` inside `schema do` or if it's a helper script move it to a separate subfolder (e.g. `scripts/services/`)."
-          end
+      return unless Dir.exist?(scripts_dir)
+
+      Dir.glob(File.join(scripts_dir, "*")).each do |file|
+        next if File.directory?(file)
+        name = File.basename(file, File.extname(file)).to_sym
+        unless decl.all_script_names.include?(name)
+          raise Frai::Error,
+            "Script `#{name}` exists in #{scripts_dir} but is not declared in #{@task_class} schema.\n" \
+            "Add `run :#{name}` inside `directive :task do` or if it's a helper script move it to a separate subfolder (e.g. `scripts/services/`)."
         end
       end
     end

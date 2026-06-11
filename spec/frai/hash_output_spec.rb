@@ -14,7 +14,7 @@ RSpec.describe "Task output Hash" do
 
       # Directive renders script result as JSON
       File.write(
-        File.join(root, "tasks", "build_report", "directives", "main.md.erb"),
+        File.join(root, "tasks", "build_report", "directives", "task.md.erb"),
         "% run(:report, params: :data, return: :report)\n<%= report.to_json %>"
       )
 
@@ -43,14 +43,16 @@ RSpec.describe "Task output Hash" do
                   required(:count).filled(:integer)
                 end
 
-                run :report do
-                  input type: Hash do
-                    required(:title).filled(:string)
-                    required(:count).filled(:integer)
-                  end
-                  returns :report, type: Hash do
-                    required(:title).filled(:string)
-                    required(:count).filled(:integer)
+                directive :task do
+                  run :report do
+                    input type: Hash do
+                      required(:title).filled(:string)
+                      required(:count).filled(:integer)
+                    end
+                    returns :report, type: Hash do
+                      required(:title).filled(:string)
+                      required(:count).filled(:integer)
+                    end
                   end
                 end
 

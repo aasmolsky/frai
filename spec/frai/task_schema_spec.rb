@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "../spec_helper"
+require "spec_helper"
 require "tmpdir"
 require "fileutils"
 
@@ -25,14 +25,16 @@ RSpec.describe "Frai schema task loading" do
 
                 param :task_id, type: String, required: true
 
-                use :code_style_guides do
-                  use :naming_rules
-                  use :formatting_rules
-                end
+                directive :task do
+                  use :code_style_guides do
+                    use :naming_rules
+                    use :formatting_rules
+                  end
 
-                run :analyze_diff do
-                  input   type: String
-                  returns :diff_value, type: String
+                  run :analyze_diff do
+                    input   type: String
+                    returns :diff_value, type: String
+                  end
                 end
 
                 output :text
@@ -50,9 +52,11 @@ RSpec.describe "Frai schema task loading" do
               schema do
                 param :input_numbers, type: String, required: true
 
-                run :summarize do
-                  input   type: [Integer]
-                  returns :total, type: Integer
+                directive :task do
+                  run :summarize do
+                    input   type: [Integer]
+                    returns :total, type: Integer
+                  end
                 end
 
                 output :text
@@ -74,7 +78,7 @@ RSpec.describe "Frai schema task loading" do
     end
   end
 
-  it "hydrates one task from its own Ruby schema and keeps another task isolated" do
+  it "hydrates one task from its own Ruby schema and keeps another task isolated", :aggregate_failures do
     code_review = CodeReview::Task._directive_declaration
     sum_numbers = SumNumbers::Task._directive_declaration
     code_review_params = code_review&.params_declaration
@@ -108,4 +112,3 @@ RSpec.describe "Frai schema task loading" do
     expect(sum_numbers_script_declarations&.[](:summarize)&.returns_schema).to eq(total: Integer)
   end
 end
-

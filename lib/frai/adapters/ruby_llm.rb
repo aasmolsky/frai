@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "ruby_llm"
 
 module Frai
@@ -76,72 +78,48 @@ module Frai
 
       def build_mcp_client(server)
         case server.type
-        when :http
-          build_http_client(server)
-        when :stdio
-          build_stdio_client(server)
+        when :http  then build_http_client(server)
+        when :stdio then build_stdio_client(server)
         end
-      rescue Frai::Error
-        raise
-      rescue => e
-        raise Frai::Error,
-          "MCP :#{server.name} failed to connect — #{e.message}"
       end
 
       def build_http_client(server)
+        config = { url: server.url_value }
+
         if server.oauth_enabled
-          build_oauth_http_client(server)
-        else
-          RubyLLM::MCP.client(
-            name:           server.name.to_s,
-            transport_type: :streamable,
-            config:         { url: server.url_value }
-          )
+          storage = oauth_storage
+          config[:oauth] = { storage: storage }
         end
-      end
 
-      def build_oauth_http_client(server)
-        cache       = Frai::MCPTokenCache.new(Frai.configuration.project_root)
-        access_token = cache.fresh_access_token(server.url_value)
+        client = RubyLLM::MCP.client(
+          name:           server.name.to_s,
+          transport_type: :streamable,
+          start:          !server.oauth_enabled,
+          config:         config
+        )
 
-        if access_token
-          # Use cached/refreshed token — inject as Authorization header
-          RubyLLM::MCP.client(
-            name:           server.name.to_s,
-            transport_type: :streamable,
-            config:         {
-              url:     server.url_value,
-              headers: { "Authorization" => "Bearer #{access_token}" }
-            }
-          )
-        else
-          # No valid token — do browser OAuth flow
-          puts "MCP :#{server.name} requires authentication. Opening browser..."
-          temp = RubyLLM::MCP.client(
-            name:           "#{server.name}_auth",
-            transport_type: :streamable,
-            start:          false,
-            config:         { url: server.url_value }
-          )
-          provider = temp.oauth(type: :browser)
-          token    = provider.authenticate
-          data     = cache.save(server.url_value, token)
+        ensure_oauth!(client, server, storage) if server.oauth_enabled
+        client.start unless client.alive?
 
-          RubyLLM::MCP.client(
-            name:           server.name.to_s,
-            transport_type: :streamable,
-            config:         {
-              url:     server.url_value,
-              headers: { "Authorization" => "Bearer #{data['access_token']}" }
-            }
-          )
-        end
+        client
       rescue Frai::Error
         raise
       rescue => e
         raise Frai::Error,
           "MCP :#{server.name} OAuth failed — #{e.message}\n" \
-          "Run `frai c` and authenticate manually."
+          "Delete .frai_oauth_cache.json and retry, or run `frai exec` again to re-authenticate."
+      end
+
+      def ensure_oauth!(client, server, storage)
+        provider = client.oauth(type: :browser, storage: storage)
+        return if provider.oauth_provider.access_token
+
+        puts "MCP :#{server.name} requires authentication. Opening browser..."
+        provider.authenticate
+      end
+
+      def oauth_storage
+        @oauth_storage ||= Frai::MCP::OAuthStorage.new(Frai.configuration.project_root)
       end
 
       def build_stdio_client(server)
@@ -156,7 +134,6 @@ module Frai
           }
         )
       end
-
     end
   end
 end

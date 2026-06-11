@@ -5,35 +5,45 @@ module Frai
   # Declared in mcp/*.rb files.
   #
   # Used for:
-  #   1. Registering with Claude CLI/Codex via `frai setup`
-  #   2. Passing to RubyLLM as tools in API mode (via ruby_llm-mcp)
+  #   1. Passing to RubyLLM as tools in API mode (via ruby_llm-mcp)
+  #   2. Registering with optional clients via `frai setup --claude|--codex|--cursor`
   #
-  # @example mcp/jira.rb — stdio server
-  #   Frai::MCP.define :jira do
-  #     command "uv"
-  #     args    ["--directory", "~/tools/jira-mcp", "run", "main.py"]
-  #     env     JIRA_URL: ENV["JIRA_URL"], JIRA_TOKEN: ENV["JIRA_TOKEN"]
+  # @example mcp/database.rb — stdio server
+  #   Frai::MCP.define :database do
+  #     desc    "Database access"
+  #     command "npx"
+  #     args    ["-y", "@modelcontextprotocol/server-postgres", ENV["DATABASE_URL"]]
+  #     env     DATABASE_URL: ENV["DATABASE_URL"]
   #   end
   #
-  # @example mcp/gitlab.rb — stdio server
-  #   Frai::MCP.define :gitlab do
-  #     command "uv"
-  #     args    ["--directory", "~/tools/gitlab-mcp", "run", "main.py"]
-  #     env     GITLAB_TOKEN: ENV["GITLAB_TOKEN"]
+  # @example mcp/remote_service.rb — HTTP with OAuth
+  #   Frai::MCP.define :remote_service do
+  #     url     ENV["REMOTE_MCP_URL"]
+  #     url_env "REMOTE_MCP_URL"
+  #     oauth   true
+  #   end
+  #
+  # @example mcp/api_gateway.rb — HTTP with bearer token
+  #   Frai::MCP.define :api_gateway do
+  #     url        ENV["GATEWAY_MCP_URL"]
+  #     bearer_env "GATEWAY_TOKEN"
   #   end
   module MCP
     class ServerDefinition
-      attr_reader :name, :type, :url_value, :command_value, :args_value, :env_value, :oauth_enabled, :description
+      attr_reader :name, :type, :url_value, :url_env_var, :command_value, :args_value,
+                  :env_value, :oauth_enabled, :bearer_env_var, :description
 
       def initialize(name)
-        @name          = name
-        @type          = :stdio
-        @url_value     = nil
-        @command_value = nil
-        @args_value    = []
-        @env_value     = {}
-        @oauth_enabled = false
-        @description   = nil
+        @name            = name
+        @type            = :stdio
+        @url_value       = nil
+        @url_env_var     = nil
+        @command_value   = nil
+        @args_value      = []
+        @env_value       = {}
+        @oauth_enabled   = false
+        @bearer_env_var  = nil
+        @description     = nil
       end
 
       def desc(text)
@@ -47,6 +57,16 @@ module Frai
 
       def oauth(enabled = true)
         @oauth_enabled = enabled
+      end
+
+      # Env var name for streamable HTTP bearer auth (Codex/Cursor setup).
+      def bearer_env(name)
+        @bearer_env_var = name.to_s
+      end
+
+      # Env var name for HTTP URL in Cursor setup (${env:NAME}).
+      def url_env(name)
+        @url_env_var = name.to_s
       end
 
       def command(value)

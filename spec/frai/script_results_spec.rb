@@ -14,7 +14,7 @@ RSpec.describe "Task#script_results" do
 
       # Directive calls the script and uses its output
       File.write(
-        File.join(root, "tasks", "analyze_data", "directives", "main.md.erb"),
+        File.join(root, "tasks", "analyze_data", "directives", "task.md.erb"),
         "% run(:prepare, params: :payload, return: :prepared)\n<%= prepared.to_json %>"
       )
 
@@ -41,9 +41,11 @@ RSpec.describe "Task#script_results" do
                   required(:value).filled(:integer)
                 end
 
-                run :prepare do
-                  input type: Hash do
-                    required(:value).filled(:integer)
+                directive :task do
+                  run :prepare do
+                    input type: Hash do
+                      required(:value).filled(:integer)
+                    end
                   end
                 end
 

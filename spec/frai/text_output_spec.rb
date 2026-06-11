@@ -24,7 +24,7 @@ RSpec.describe "Task text output" do
   around do |example|
     Dir.mktmpdir do |root|
       FileUtils.mkdir_p(File.join(root, "tasks", "summarize", "directives"))
-      File.write(File.join(root, "tasks", "summarize", "directives", "main.md.erb"), "Summarize")
+      File.write(File.join(root, "tasks", "summarize", "directives", "task.md.erb"), "Summarize")
 
       File.write(
         File.join(root, "tasks", "summarize", "task.rb"),

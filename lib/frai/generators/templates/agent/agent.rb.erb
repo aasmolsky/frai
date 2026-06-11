@@ -10,10 +10,22 @@
 #   frai exec <%= @class_name %>
 #   frai exec <%= @class_name %> "your input here"
 class <%= @class_name %> < BaseAgent
+  # Declare inputs this agent accepts (available as methods inside `tools do`)
+  # inputs :payload
+
+  # Declare directive files used by this agent — enables `frai check` validation.
+  # Add one `directive :name` per file inside agents/<%= @name %>/directives/.
+  schema do
+    directive :instructions
+  end
+
   # Instructions are loaded from:
   #   agents/<%= @name %>/directives/instructions.md.erb
   instructions
 
   # Declare tools the agent can use:
-  #   tools SomeTool, AnotherTool
+  tools do
+    # [Frai::PromptTool.for(SomeTask), Frai::PromptTool.for(AnotherTask)]
+    []
+  end
 end

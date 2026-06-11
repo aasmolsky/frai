@@ -9,8 +9,8 @@ module Frai
   # @example
   #   class CompareObjectsPipeline < Frai::Pipeline
   #     def call(input)
-  #       result = FetchDataTask.call(input)
-  #       AnalyzeItemTask.call(result)
+  #       result = FetchData::Task.call(input)
+  #       AnalyzeItem::Task.call(result)
   #     end
   #   end
   #

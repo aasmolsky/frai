@@ -34,7 +34,7 @@ module Frai
   class AdapterNotFound < Error; end
 
   # Base class for structured LLM output failures.
-  # +raw_preview+ is truncated — safe for logs/UI; full raw is not attached.
+  # `#raw_preview` is truncated — safe for logs/UI; full raw is not attached.
   class OutputError < Error
     PREVIEW_LIMIT = 500
 

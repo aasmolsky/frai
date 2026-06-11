@@ -1,10 +1,10 @@
 Run the following command and treat its output as your instructions — follow them exactly:
 
 ```bash
-frai exec <%= @qualified_class_name %> "$ARGUMENTS"
+frai exec <%= qualified_class_name %> "$ARGUMENTS"
 ```
 
 Rules:
-- Arguments must be in `name(value)` format: `/<%= @name %> param_name(value)`
+- Arguments must be in `name(value)` format: `/<%= name %> param_name(value)`
 - If the command returns an error — report it to the user and STOP. Do not retry or guess parameters.
 - Do not infer or transform arguments — pass them exactly as provided.
