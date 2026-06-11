@@ -366,9 +366,9 @@ module Frai
         return prompt
       end
 
-      # llm true, non-production: return rendered prompt for inspection
-      # In test, mock the task via allow(...).to receive(:call) if you need a Hash
-      return prompt if Frai.configuration.non_production?
+    # llm true, non-production or agent: return rendered prompt for inspection
+    # In test, mock the task via allow(...).to receive(:call) if you need a Hash
+    return prompt if Frai.configuration.non_production? || Frai.configuration.agent?
 
       case self.class._output_kind
       when :schema

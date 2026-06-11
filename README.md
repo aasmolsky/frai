@@ -108,15 +108,17 @@ When you run `frai gt analyze_item`:
 
 ## Environments
 
-Frai supports three environments controlled by `FRAI_ENV` in `.env`:
+Frai supports four environments controlled by `FRAI_ENV` in `.env`:
 
 | `FRAI_ENV` | MCPs | LLM | Returns |
 |------------|------|-----|---------|
 | `development` | skipped | skipped | rendered prompt |
 | `test` | skipped | skipped | rendered prompt |
+| `agent` | connected | skipped | rendered prompt |
 | `production` | connected | called | LLM response |
 
 Default is `production`. In `development` and `test`, all MCP servers are skipped and the null adapter is used regardless of `LLM_MODEL` — you see the rendered prompt without any API calls.
+In `agent` mode, MCP servers connect and scripts run (just like production), but the LLM call is skipped and the prompt is returned. This is designed for LLM orchestration flows where the framework Tasks act as "Prompt Generation Tools" for a parent Agent processing the actual API calls.
 
 Override inline for a single run:
 ```bash
@@ -181,11 +183,12 @@ FRAI_ENV=production frai exec CodeReview::Task "task_id(PDB-123)"
 |-----|-----------|------|----------|
 | **development** | skipped | skipped | See prompts without API calls, test locally |
 | **test** | skipped | skipped | Run specs, validate task structure |
+| **agent** | skipped | connected | Run tasks as prompt generators inside an orchestration loop |
 | **production** | called | connected | Real API calls, connected MCP servers |
 
 **Check which mode you're in:**
 ```ruby
-Frai.configuration.env         # → :development, :test, or :production
+Frai.configuration.env         # → :development, :test, :agent, or :production
 Frai.configuration.model       # → nil (CLI mode) or "claude-opus-4-6" (API mode)
 ```
 

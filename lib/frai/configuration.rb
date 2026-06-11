@@ -22,6 +22,7 @@ module Frai
 
     # Environment: :development or :production (default).
     # In development: OAuth MCP servers are skipped with a warning.
+    # In agent: behaves like development, but returns the prompt.
     attr_accessor :env
 
     # Root directory of the current project (auto-detected).
@@ -47,13 +48,22 @@ module Frai
       @env == :test
     end
 
+    def agent?
+      env == :agent
+    end
+
     def production?
-      @env == :production
+      env == :production
     end
 
     # Both development and test skip MCPs and LLM calls
     def non_production?
       development? || test?
+    end
+
+    # Returns the effective env — respects per-thread override set by Frai::Agent.call.
+    def env
+      Thread.current[:frai_env_override] || @env
     end
   end
 
