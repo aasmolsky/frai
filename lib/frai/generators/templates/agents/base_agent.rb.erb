@@ -10,13 +10,13 @@ require "frai"
 # An agent uses RubyLLM's built-in tool-calling loop:
 # declare tools and instructions, the LLM decides what to call and when.
 #
-# Declare a directive schema so `frai check` can validate directive files:
+# Declare directives so `frai check` can validate directive files:
 #
 # @example
 #   class ReviewsAgent < BaseAgent
 #     inputs :payload
 #
-#     schema do
+#     directives do
 #       directive :instructions  # agents/reviews/directives/instructions.md.erb
 #     end
 #

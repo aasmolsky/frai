@@ -9,13 +9,13 @@ module Frai
   # Declare tools and instructions using the RubyLLM DSL, then call the agent
   # with keyword arguments matching your declared `inputs`.
   #
-  # Optionally declare a directive schema so `frai check` can validate that all
+  # Optionally declare directives so `frai check` can validate that all
   # referenced `.md.erb` files exist and there are no orphan files on disk:
   #
   #   class DataAnalysisAgent < BaseAgent
   #     inputs :payload
   #
-  #     schema do
+  #     directives do
   #       directive :instructions           # agents/data_analysis/directives/instructions.md.erb
   #       directive :tool_descriptions      # agents/data_analysis/directives/tool_descriptions.md.erb
   #     end
@@ -26,9 +26,9 @@ module Frai
   #
   #   DataAnalysisAgent.call("Complete the task.", payload: data)
   class Agent < RubyLLM::Agent
-    # Tracks which directive files an agent declares via `schema do directive :name end`.
+    # Tracks which directive files an agent declares via `directives do directive :name end`.
     # Used exclusively by AgentStructureChecker — has no runtime effect.
-    class DirectiveSchema
+    class DirectivesDeclaration
       attr_reader :directive_names
 
       def initialize
@@ -52,7 +52,9 @@ module Frai
       # @param message [String] initial message / task description for the agent
       # @param kwargs [Hash] input values declared via `inputs :name`
       # @return [String] agent's final response
-      def call(message = "Complete the task.", **kwargs)
+      def call(message = nil, **kwargs)
+        message = "Complete the task." if message.nil? || message.to_s.strip.empty?
+
         raise Frai::Error,
           "#{self} cannot be called from within an agent context — agents cannot be nested." if Frai.configuration.inside_agent_tool?
 
@@ -61,28 +63,31 @@ module Frai
           return "[dry run] #{name}: #{message}"
         end
 
+        model = Frai.configuration.model
+        if model.nil? || model.to_s.strip.empty?
+          raise Frai::Error,
+            "LLM_MODEL is required for agents in production. Set LLM_MODEL in .env or config/frai.rb."
+        end
+
         Frai.run_with_task_context(:agent_tool) do
-          new(**kwargs).ask(message)
+          new(model: model, **kwargs).ask(message).content
         end
       end
 
       # Declares which directive files this agent uses (setter), or returns the
-      # current declaration (getter).
+      # current declaration (getter). Does not override RubyLLM::Agent#schema.
       #
-      # Overrides RubyLLM::Agent#schema intentionally — Frai agents are
-      # orchestrators that return text; structured output belongs in tasks.
-      #
-      #   schema do
+      #   directives do
       #     directive :instructions
       #     directive :tool_descriptions
       #   end
-      def schema(&block)
+      def directives(&block)
         if block_given?
-          ds = DirectiveSchema.new
-          ds.instance_eval(&block)
-          @_agent_directive_schema = ds
+          declaration = DirectivesDeclaration.new
+          declaration.instance_eval(&block)
+          @_agent_directives = declaration
         else
-          @_agent_directive_schema
+          @_agent_directives
         end
       end
 

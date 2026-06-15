@@ -673,7 +673,7 @@ module Frai
       return Frai::Adapters::Null.new unless model
 
       require_relative "adapters/ruby_llm"
-      Frai::Adapters::RubyLlm.new(model, Frai.configuration.api_key)
+      Frai::Adapters::RubyLlm.new(model)
     rescue LoadError
       raise Frai::Error,
         "ruby_llm gem not found. Add `gem \"ruby_llm\"` to your Gemfile."

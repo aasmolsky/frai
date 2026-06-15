@@ -7,9 +7,8 @@ module Frai
     # RubyLLM adapter — sends the rendered prompt to the configured LLM.
     # MCP servers are passed from Task#call and attached as tools.
     class RubyLlm
-      def initialize(model, api_key)
+      def initialize(model)
         @model = model
-        configure_provider(model, api_key)
       end
 
       # @param prompt [String] rendered prompt
@@ -32,21 +31,6 @@ module Frai
       end
 
       private
-
-      def configure_provider(model, api_key)
-        key = api_key.to_s.strip
-        raise Frai::Error, "LLM_API_KEY is not set" if key.empty?
-
-        RubyLLM.configure do |c|
-          case model.to_s
-          when /\Agpt/, /\Ao1/, /\Ao3/, /\Atext-/ then c.openai_api_key    = key
-          when /\Aclaude/                          then c.anthropic_api_key = key
-          when /\Agemini/                          then c.gemini_api_key    = key
-          when /\Amistral/                         then c.mistral_api_key   = key
-          else                                          c.openai_api_key    = key
-          end
-        end
-      end
 
       def attach_mcp_servers(chat, servers)
         clients = []

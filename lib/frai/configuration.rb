@@ -118,6 +118,7 @@ module Frai
     # @yield [Frai::Configuration]
     def configure
       yield configuration
+      Llm.apply_from!(configuration)
     end
 
     # Runs a block with a temporary task execution context (e.g. :agent_tool).
@@ -131,6 +132,7 @@ module Frai
     # Resets configuration to defaults (useful in tests).
     def reset!
       @configuration = Configuration.new
+      Llm.reset!
     end
 
     # Auto-loads all Ruby files from project directories.

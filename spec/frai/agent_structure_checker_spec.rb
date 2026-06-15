@@ -32,7 +32,7 @@ RSpec.describe Frai::AgentStructureChecker do
   end
 
   describe "#check!" do
-    context "when no schema is declared" do
+    context "when no directives block is declared" do
       it "does not raise" do
         expect { checker.check! }.not_to raise_error
       end
@@ -40,7 +40,7 @@ RSpec.describe Frai::AgentStructureChecker do
 
     context "when a declared directive is missing from disk" do
       before do
-        agent_class.schema do
+        agent_class.directives do
           directive :instructions
         end
       end
@@ -56,7 +56,7 @@ RSpec.describe Frai::AgentStructureChecker do
         write_file("agents/review_analysis/directives/instructions.md.erb")
         write_file("agents/review_analysis/directives/tool_descriptions.md.erb")
 
-        agent_class.schema do
+        agent_class.directives do
           directive :instructions
           directive :tool_descriptions
         end
@@ -67,24 +67,24 @@ RSpec.describe Frai::AgentStructureChecker do
       end
     end
 
-    context "when there is an orphan directive file not declared in schema" do
+    context "when there is an orphan directive file not declared in directives" do
       before do
         write_file("agents/review_analysis/directives/instructions.md.erb")
         write_file("agents/review_analysis/directives/orphan.md.erb")
 
-        agent_class.schema do
+        agent_class.directives do
           directive :instructions
         end
       end
 
       it "raises an Error with the orphan name and remediation hint", :aggregate_failures do
         expect { checker.check! }.to raise_error(Frai::Error, /Directive `orphan` exists in .* but is not declared/)
-        expect { checker.check! }.to raise_error(Frai::Error, /Add `directive :orphan` inside `schema do`/)
+        expect { checker.check! }.to raise_error(Frai::Error, /Add `directive :orphan` inside `directives do`/)
       end
     end
 
-    context "when directives folder does not exist and schema is empty" do
-      before { agent_class.schema {} }
+    context "when directives folder does not exist and directives block is empty" do
+      before { agent_class.directives {} }
 
       it "does not raise" do
         expect { checker.check! }.not_to raise_error
@@ -92,10 +92,10 @@ RSpec.describe Frai::AgentStructureChecker do
     end
   end
 
-  describe "Frai::Agent::DirectiveSchema" do
+  describe "Frai::Agent::DirectivesDeclaration" do
     it "raises when the same directive is declared twice" do
       expect do
-        agent_class.schema do
+        agent_class.directives do
           directive :instructions
           directive :instructions
         end

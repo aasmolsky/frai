@@ -25,6 +25,7 @@ require_relative "frai/setup/mcp"
 require_relative "frai/setup/commands"
 
 # Adapters — null always loaded; ruby_llm loaded lazily when model is configured
+require_relative "frai/llm"
 require_relative "frai/adapters/null"
 require_relative "frai/json_response"
 

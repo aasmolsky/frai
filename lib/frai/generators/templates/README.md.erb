@@ -523,7 +523,7 @@ frai ga data_analysis
 class DataAnalysisAgent < BaseAgent
   inputs :payload
 
-  schema do
+  directives do
     directive :instructions       # for frai check validation
   end
 
@@ -542,7 +542,7 @@ In `development` / `test`, `Agent.call` returns `"[dry run] AgentName: message"`
 ### Key concepts
 
 - `inputs :name` — declares keyword args available inside `tools do`
-- `schema do directive :name end` — declares files for `frai check` (no runtime effect)
+- `directives do directive :name end` — declares files for `frai check` (no runtime effect)
 - `instructions` — loads `agents/<name>/directives/instructions.md.erb`
 - `Frai::PromptTool` — wraps a task, returns `prompt_results` (rendered prompt + symbolic script refs)
 - `Frai::ScriptTool` — wraps a `llm false` task, returns `script_results` (actual script data)

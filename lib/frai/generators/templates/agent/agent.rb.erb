@@ -13,9 +13,8 @@ class <%= @class_name %> < BaseAgent
   # Declare inputs this agent accepts (available as methods inside `tools do`)
   # inputs :payload
 
-  # Declare directive files used by this agent — enables `frai check` validation.
-  # Add one `directive :name` per file inside agents/<%= @name %>/directives/.
-  schema do
+# Declare directive files used by this agent — enables `frai check` validation.
+  directives do
     directive :instructions
   end
 
