@@ -12,21 +12,19 @@ RSpec.describe "Task output Hash" do
       FileUtils.mkdir_p(File.join(root, "tasks", "build_report", "directives"))
       FileUtils.mkdir_p(File.join(root, "tasks", "build_report", "scripts"))
 
-      # Directive renders script result as JSON
+      # Directive runs the script — output comes from script_results, not the template
       File.write(
         File.join(root, "tasks", "build_report", "directives", "task.md.erb"),
-        "% run(:report, params: :data, return: :report)\n<%= report.to_json %>"
+        "% run(:report, params: :data, return: :report)\n"
       )
 
       # Script echoes input back as report
       File.write(
         File.join(root, "tasks", "build_report", "scripts", "report.rb"),
         <<~RUBY
-          #!/usr/bin/env ruby
-          require "json"
-          payload = JSON.parse($stdin.read, symbolize_names: true)
-          data = payload[:input] || payload
-          puts JSON.generate(report: { title: data[:title], count: data[:count] })
+          def call(data)
+            { report: { title: data[:title], count: data[:count] } }
+          end
         RUBY
       )
 
@@ -89,6 +87,36 @@ RSpec.describe "Task output Hash" do
 
     expect(result).to be_a(Hash)
     expect(result[:title]).to eq("Prod")
+  end
+
+  it "falls back to parsing rendered JSON when no scripts ran", :aggregate_failures do
+    Dir.mktmpdir do |root|
+      FileUtils.mkdir_p(File.join(root, "tasks", "static_hash", "directives"))
+      File.write(
+        File.join(root, "tasks", "static_hash", "directives", "task.md.erb"),
+        '{"title":"Static","count":1}'
+      )
+      File.write(
+        File.join(root, "tasks", "static_hash", "task.rb"),
+        <<~RUBY
+          module StaticHash
+            class Task < BaseTask
+              schema do
+                llm false
+                param :id, type: String, required: true
+                output Hash
+              end
+            end
+          end
+        RUBY
+      )
+      load File.join(root, "tasks", "static_hash", "task.rb")
+      Frai.configure { |c| c.project_root = root }
+
+      result = StaticHash::Task.call(id: "x")
+
+      expect(result).to eq(title: "Static", count: 1)
+    end
   end
 end
 

@@ -380,7 +380,7 @@ module Frai
     # @param input [Hash, String, nil]
     # @return [String, Hash]
     #   - rendered prompt when llm false + output :text, or when llm true + non-production
-    #   - Hash when output Schema or output Hash
+    #   - Hash when output Schema, output Hash (llm false: from script_results)
     #   - String when output :text
     def call(input = nil)
       decl = self.class._directive_declaration
@@ -413,9 +413,12 @@ module Frai
         @_script_results.keys.each_with_object({}) { |k, h| h[k] = k }
       )
 
-      # llm false: no LLM call; output Hash parses the rendered directive, output :text returns it as-is
+      # llm false: no LLM call; output Hash from script_results, or parse rendered JSON as fallback
       unless self.class._llm_enabled
-        return parse_rendered_as_hash(prompt, input) if self.class._output_kind == :hash
+        if self.class._output_kind == :hash
+          return hash_from_script_results(input) unless @_script_results.empty?
+          return parse_rendered_as_hash(prompt, input)
+        end
         return prompt
       end
 
@@ -557,6 +560,24 @@ module Frai
       raise Frai::OutputRetriesExhaustedError.new(
         e, attempts: 1, task_class: self.class, raw: rendered
       )
+    end
+
+    def hash_from_script_results(input)
+      Frai::JsonResponse.normalize(
+        build_output_from_script_results,
+        validate:           output_validation,
+        validator_receiver: output_validation ? self : nil,
+        context:            input,
+        strict:             self.class._output_strict,
+        task_class:         self.class
+      )
+    end
+
+    def build_output_from_script_results
+      return {} if @_script_results.empty?
+      return @_script_results.values.first if @_script_results.size == 1
+
+      @_script_results
     end
 
     RETRY_MESSAGE_LIMIT = 300

@@ -15,17 +15,16 @@ RSpec.describe "Task#script_results" do
       # Directive calls the script and uses its output
       File.write(
         File.join(root, "tasks", "analyze_data", "directives", "task.md.erb"),
-        "% run(:prepare, params: :payload, return: :prepared)\n<%= prepared.to_json %>"
+        "% run(:prepare, params: :payload, return: :prepared)\n"
       )
 
       # Script returns { prepared: { value: ..., doubled: ... } }
       File.write(
         File.join(root, "tasks", "analyze_data", "scripts", "prepare.rb"),
         <<~RUBY
-          #!/usr/bin/env ruby
-          require "json"
-          input = JSON.parse($stdin.read, symbolize_names: true)[:input]
-          puts JSON.generate(prepared: { value: input[:value], doubled: input[:value].to_i * 2 })
+          def call(input)
+            { prepared: { value: input[:value], doubled: input[:value].to_i * 2 } }
+          end
         RUBY
       )
 

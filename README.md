@@ -379,7 +379,7 @@ Every task must declare one:
 | Declaration | Returns |
 |---|---|
 | `output :text` | `String` |
-| `output Hash` | `Hash` (parsed from JSON) |
+| `output Hash` | `Hash` (`llm false`: from scripts; `llm true`: parsed from LLM JSON) |
 | `output YourSchema` | `Hash` (validated via RubyLLM structured output) |
 | `output Schema, retries: 2` | Retry on validation failure |
 
@@ -395,7 +395,7 @@ Or delegate: `output OutputSchema, validate: :validate_output!`
 
 ### Skipping the LLM
 
-`llm false` + `output Hash` = data-transformation task (scripts run, no LLM):
+`llm false` + `output Hash` = data-transformation task (scripts run, no LLM). `Task.call` returns script output directly — no `to_json` in the directive template.
 
 ```ruby
 schema do
@@ -408,6 +408,14 @@ schema do
   output Hash
 end
 ```
+
+Directive — run the script only:
+
+```erb
+% run(:process, params: :data, return: :result)
+```
+
+With one `returns :key`, `Task.call` returns that script value. With several scripts, it returns the full `script_results` hash. If no scripts run, the framework falls back to parsing JSON from the rendered template (legacy).
 
 ### Script results after LLM call
 
@@ -514,21 +522,56 @@ You are a data analyst...
 
 ## Scripts
 
-External subprocesses: JSON on stdin → JSON on stdout.
+Task scripts implement **`call(input)`** and return a Hash. Frai passes `input` and reads the result — no JSON boilerplate in your files.
 
-| Extension | Runtime |
+| Extension | How it runs |
 |---|---|
-| `.rb` | ruby |
-| `.py` | python3 |
-| `.js` | node |
-| `.sh` | bash |
+| `.rb` | in-process Ruby (`call(input)` or expression with `input`) |
+| `.py` | `python3` via Frai shim |
+| `.js` | `node` via Frai shim |
+| `.php` | `php` via Frai shim |
+| `.ts` | `tsx` / `bun` / `npx tsx` via Frai shim |
+| `.sh` | `bash` subprocess (legacy JSON stdin/stdout in the script) |
 
 ```ruby
 # tasks/analyze_item/scripts/fetch_data.rb
-require "json"
-input = JSON.parse($stdin.read, symbolize_names: true)[:input]
-puts JSON.generate({ diff: "diff for #{input}" })
+def call(input)
+  { diff: "diff for #{input}" }
+end
 ```
+
+```python
+# tasks/analyze_item/scripts/fetch_data.py
+def call(input):
+    return {"diff": f"diff for {input}"}
+```
+
+```javascript
+// tasks/analyze_item/scripts/fetch_data.js
+function call(input) {
+  return { diff: `diff for ${input}` };
+}
+
+module.exports = { call };
+```
+
+```php
+# tasks/analyze_item/scripts/fetch_data.php
+<?php
+
+function call($input) {
+    return ['diff' => "diff for {$input}"];
+}
+```
+
+```typescript
+// tasks/analyze_item/scripts/fetch_data.ts
+export function call(input: string) {
+  return { diff: `diff for ${input}` };
+}
+```
+
+Legacy scripts that read JSON from `$stdin` and write JSON to stdout still work.
 
 Scripts are never autoloaded. Results are memoized per task execution.
 
@@ -970,7 +1013,7 @@ rm -rf my_project
 | `LLM_API_KEY is not set` | Set `LLM_API_KEY` when `LLM_MODEL` is set; or leave `LLM_MODEL` empty for CLI mode (tasks only) |
 | Agent fails without API key in production | Agents require `LLM_MODEL` and `LLM_API_KEY` — CLI mode applies to standalone tasks, not agents |
 | `agents cannot be nested` | Use `Frai::PromptTool` to call tasks, not other agents |
-| `Unsupported script extension` | Only `.rb`, `.py`, `.js`, `.sh` are supported |
+| `Unsupported script extension` | Only `.rb`, `.py`, `.js`, `.php`, `.ts`, `.sh` are supported |
 | `uninitialized constant MyTask` | Use `MyTask::Task` (not `MyTask`) with `frai exec` |
 | `rspec` not found | Run `gem install frai` — rspec is bundled |
 | `No MCP servers defined` | Normal if `mcp/` is empty — `frai setup --claude` still syncs slash commands; `--codex` / `--cursor` skip MCP registration |
