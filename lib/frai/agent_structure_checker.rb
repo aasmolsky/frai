@@ -1,13 +1,7 @@
 # frozen_string_literal: true
 
 module Frai
-  # Validates that all directive files declared in an agent's directives block
-  # actually exist on disk, and that no orphan .md.erb files are present.
-  #
-  # Mirrors StructureChecker for tasks — see that class for the full task logic.
-  #
-  # @example
-  #   Frai::AgentStructureChecker.new(DataAnalysisAgent).check!
+  # Validates agent instructions contract for all three instructions modes.
   class AgentStructureChecker
     def initialize(agent_class)
       @agent_class  = agent_class
@@ -15,21 +9,57 @@ module Frai
       @project_root = Frai.configuration.project_root
     end
 
-    # Checks all declared directives exist and no orphan files are present.
-    # Raises Frai::MissingDirective or Frai::Error on first violation.
-    # Returns immediately when no directives block is declared.
     def check!
-      declaration = @agent_class.directives
-      return unless declaration
+      mode = @agent_class.instructions_mode
+      return unless mode
 
-      declaration.directive_names.each { |name| find_directive!(name) }
-      check_orphan_files!(declaration)
+      case mode
+      when :inline      then check_unused_directive_files!
+      when :file        then check_file_mode!
+      when :composite   then check_composite_mode!
+      end
     end
 
     private
 
+    def check_file_mode!
+      find_directive!(:instructions)
+      check_orphan_files!(%i[instructions])
+    end
+
+    def check_composite_mode!
+      declaration = @agent_class.instructions_declaration
+      raise Frai::Error, "#{@agent_class} is missing instructions declaration" unless declaration
+
+      allowed = ([declaration.name] + declaration.all_directive_names).uniq
+      allowed.each { |name| find_directive!(name) }
+      check_orphan_files!(allowed)
+    end
+
+    def check_unused_directive_files!
+      files = directive_files_on_disk
+      return if files.empty?
+
+      listed = files.map { |path| "- #{path}" }.join("\n")
+      raise Frai::Error,
+        "Inline instructions in #{@agent_class}, but unused directive files were found:\n" \
+        "#{listed}\n" \
+        "Remove the files or switch to `instructions` / `instructions do`."
+    end
+
+    def check_orphan_files!(allowed_names)
+      directive_files_on_disk.each do |path|
+        name = directive_basename(path)
+        next if allowed_names.include?(name)
+
+        raise Frai::Error,
+          "Directive `#{name}` exists in #{directives_dir} but is not declared in #{@agent_class} instructions.\n" \
+          "Add `use :#{name}` inside `instructions do` or delete the file."
+      end
+    end
+
     def find_directive!(name)
-      path = File.join(@project_root, "agents", @agent_name, "directives", "#{name}.md.erb")
+      path = File.join(directives_dir, "#{name}.md.erb")
       return if File.exist?(path)
 
       raise Frai::MissingDirective,
@@ -37,18 +67,18 @@ module Frai
         "Expected: agents/#{@agent_name}/directives/#{name}.md.erb"
     end
 
-    def check_orphan_files!(declaration)
-      directives_dir = File.join(@project_root, "agents", @agent_name, "directives")
-      return unless Dir.exist?(directives_dir)
+    def directive_files_on_disk
+      return [] unless Dir.exist?(directives_dir)
 
-      Dir.glob(File.join(directives_dir, "*.{md.erb,erb}")).each do |file|
-        name = File.basename(file).sub(/\.md\.erb$/, "").sub(/\.erb$/, "").to_sym
-        next if declaration.directive_names.include?(name)
+      Dir.glob(File.join(directives_dir, "*.{md.erb,erb}"))
+    end
 
-        raise Frai::Error,
-          "Directive `#{name}` exists in #{directives_dir} but is not declared in #{@agent_class} directives.\n" \
-          "Add `directive :#{name}` inside `directives do` or delete the file."
-      end
+    def directive_basename(path)
+      File.basename(path).sub(/\.md\.erb$/, "").sub(/\.erb$/, "").to_sym
+    end
+
+    def directives_dir
+      File.join(@project_root, "agents", @agent_name, "directives")
     end
   end
 end

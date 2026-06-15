@@ -154,8 +154,11 @@ module Frai
     # @param script_runner [Frai::ScriptRunner]
     # @param constants [Hash] task-level constants — available as @name in all directives
     # @param declaration [DirectiveDeclaration, nil] used for input/output schema validation
-    def initialize(task_name, project_root, script_runner, constants = {}, declaration = nil)
-      @task_name     = task_name.to_s
+    # @param agent_name [String, nil] when set, resolves directives under agents/<agent_name>/directives/
+    def initialize(task_name, project_root, script_runner, constants = {}, declaration = nil,
+                   agent_name: nil)
+      @task_name     = task_name&.to_s
+      @agent_name    = agent_name&.to_s
       @project_root  = project_root
       @script_runner = script_runner
       @constants     = constants
@@ -266,14 +269,27 @@ module Frai
     end
 
     def find_directive!(name)
-      candidates = [
-        File.join(@project_root, "tasks", @task_name, "directives", "#{name}.md.erb"),
-        File.join(@project_root, "tasks", @task_name, "directives", "#{name}.erb"),
-        File.join(@project_root, "directives", "#{name}.md.erb")
-      ]
+      candidates = if @agent_name
+        [
+          File.join(@project_root, "agents", @agent_name, "directives", "#{name}.md.erb"),
+          File.join(@project_root, "agents", @agent_name, "directives", "#{name}.erb")
+        ]
+      else
+        [
+          File.join(@project_root, "tasks", @task_name, "directives", "#{name}.md.erb"),
+          File.join(@project_root, "tasks", @task_name, "directives", "#{name}.erb"),
+          File.join(@project_root, "directives", "#{name}.md.erb")
+        ]
+      end
 
       path = candidates.find { |p| File.exist?(p) }
       return path if path
+
+      if @agent_name
+        raise Frai::MissingDirective,
+          "Directive '#{name}' not found for agent.\n" \
+          "Expected: agents/#{@agent_name}/directives/#{name}.md.erb"
+      end
 
       raise Frai::MissingDirective,
         "Directive '#{name}' not found.\n" \

@@ -13,11 +13,6 @@ class <%= @class_name %> < BaseAgent
   # Declare inputs this agent accepts (available as methods inside `tools do`)
   # inputs :payload
 
-# Declare directive files used by this agent — enables `frai check` validation.
-  directives do
-    directive :instructions
-  end
-
   # Instructions are loaded from:
   #   agents/<%= @name %>/directives/instructions.md.erb
   instructions

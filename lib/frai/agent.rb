@@ -5,53 +5,37 @@ require "ruby_llm/agent"
 module Frai
   # Base class for all Frai agents.
   #
-  # Wraps RubyLLM::Agent and adds a conventional .call interface.
-  # Declare tools and instructions using the RubyLLM DSL, then call the agent
-  # with keyword arguments matching your declared `inputs`.
+  # Instructions — three modes (mutually exclusive):
   #
-  # Optionally declare directives so `frai check` can validate that all
-  # referenced `.md.erb` files exist and there are no orphan files on disk:
-  #
-  #   class DataAnalysisAgent < BaseAgent
-  #     inputs :payload
-  #
-  #     directives do
-  #       directive :instructions           # agents/data_analysis/directives/instructions.md.erb
-  #       directive :tool_descriptions      # agents/data_analysis/directives/tool_descriptions.md.erb
+  #   instructions                         # → agents/<name>/directives/instructions.md.erb
+  #   instructions "You are helpful."      # inline — no directive files allowed
+  #   instructions do                      # composite — declare tree with `use`, compose in ERB
+  #     use :instructions do
+  #       use :guidelines
   #     end
-  #
-  #     instructions               # → agents/data_analysis/directives/instructions.md.erb
-  #     tools do ... end
   #   end
-  #
-  #   DataAnalysisAgent.call("Complete the task.", payload: data)
   class Agent < RubyLLM::Agent
-    # Tracks which directive files an agent declares via `directives do directive :name end`.
-    # Used exclusively by AgentStructureChecker — has no runtime effect.
-    class DirectivesDeclaration
-      attr_reader :directive_names
-
-      def initialize
-        @directive_names = []
-      end
-
-      # Declares that agents/<agent_name>/directives/<name>.md.erb must exist.
-      # Raises if the same name is declared twice.
-      def directive(name)
-        name = name.to_sym
-        raise Frai::Error, "directive :#{name} already declared" if @directive_names.include?(name)
-
-        @directive_names << name
-      end
-    end
-
     class << self
+      def inherited(subclass)
+        super
+        %i[@_instructions_mode @_instructions_declaration].each do |ivar|
+          next unless instance_variable_defined?(ivar)
+
+          subclass.instance_variable_set(ivar, instance_variable_get(ivar))
+        end
+      end
+
+      # @return [Symbol, nil] :file, :inline, :composite
+      def instructions_mode
+        @_instructions_mode
+      end
+
+      # @return [Frai::DirectiveDeclaration, nil]
+      def instructions_declaration
+        @_instructions_declaration
+      end
+
       # Runs the agent by sending an initial message and returning the response.
-      # Tasks invoked via PromptTool/ScriptTool run in :agent_tool context (prompt only).
-      #
-      # @param message [String] initial message / task description for the agent
-      # @param kwargs [Hash] input values declared via `inputs :name`
-      # @return [String] agent's final response
       def call(message = nil, **kwargs)
         message = "Complete the task." if message.nil? || message.to_s.strip.empty?
 
@@ -74,27 +58,32 @@ module Frai
         end
       end
 
-      # Declares which directive files this agent uses (setter), or returns the
-      # current declaration (getter). Does not override RubyLLM::Agent#schema.
-      #
-      #   directives do
-      #     directive :instructions
-      #     directive :tool_descriptions
-      #   end
-      def directives(&block)
+      # Mode A — load agents/<agent>/directives/instructions.md.erb
+      # Mode B — inline string (no directive files on disk)
+      # Mode C — instructions do ... end with nested `use` declarations
+      def instructions(text = nil, **locals, &block)
         if block_given?
-          declaration = DirectivesDeclaration.new
-          declaration.instance_eval(&block)
-          @_agent_directives = declaration
+          builder = InstructionsBuilder.new
+          builder.instance_eval(&block)
+          @_instructions_mode = :composite
+          @_instructions_declaration = builder.build!
+          super({ prompt: @_instructions_declaration.name.to_s, locals: locals })
+        elsif text.nil? && locals.empty?
+          @_instructions_mode = :file
+          @_instructions_declaration = DirectiveDeclaration.new(:instructions)
+          super()
         else
-          @_agent_directives
+          @_instructions_mode = :inline
+          @_instructions_declaration = nil
+          super(text, **locals, &block)
         end
       end
 
-      # Snake-case folder name for this agent under agents/.
-      # Used by AgentStructureChecker and prompt_path_for.
-      #
-      # Example: DataPipeline::DataAnalysisAgent → "data_analysis"
+      def directives(*)
+        raise Frai::Error,
+          "directives do was removed. Use `instructions`, `instructions \"...\"`, or `instructions do`."
+      end
+
       def _agent_directive_path
         base = name.to_s.split("::").last || ""
         base = base.sub(/Agent\z/, "").sub(/_\z/, "")
@@ -103,16 +92,40 @@ module Frai
             .downcase
       end
 
+      # Renders agent instructions via Frai::DirectiveRenderer (supports `use` in ERB).
+      def render_prompt(name, chat:, inputs:, locals:)
+        case instructions_mode
+        when :file, :composite
+          render_frai_instructions(inputs, locals)
+        else
+          super
+        end
+      end
+
       private
 
-      # Resolves instruction file from agents/<agent_name>/directives/<name>.md.erb
-      # so agents follow the same convention as tasks.
-      #
-      # Called by the RubyLLM DSL when `instructions` is used without an argument:
-      #
-      #   class DataAnalysisAgent < BaseAgent
-      #     instructions   # → agents/data_analysis/directives/instructions.md.erb
-      #   end
+      def render_frai_instructions(inputs, locals)
+        declaration = instructions_declaration
+        renderer    = DirectiveRenderer.new(
+          nil,
+          Frai.configuration.project_root,
+          NullScriptRunner.new,
+          {},
+          declaration,
+          agent_name: _agent_directive_path
+        )
+        renderer.render(declaration, normalize_instruction_inputs(inputs, locals))
+      end
+
+      def normalize_instruction_inputs(inputs, locals)
+        hash = case inputs
+               when Hash  then inputs.transform_keys(&:to_sym)
+               when nil   then {}
+               else            { input: inputs }
+               end
+        hash.merge(locals.transform_keys(&:to_sym))
+      end
+
       def prompt_path_for(name)
         Pathname.new(Frai.configuration.project_root)
                 .join("agents", _agent_directive_path, "directives", "#{name}.md.erb")
@@ -120,3 +133,6 @@ module Frai
     end
   end
 end
+
+require_relative "agent/null_script_runner"
+require_relative "agent/instructions_builder"

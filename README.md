@@ -624,10 +624,6 @@ frai ga data_analysis
 class DataAnalysisAgent < BaseAgent
   inputs :payload
 
-  directives do
-    directive :instructions       # for frai check validation
-  end
-
   instructions                    # loads instructions.md.erb as system prompt
 
   tools do
@@ -638,13 +634,46 @@ end
 DataAnalysisAgent.call("Analyze the input.", payload: data)
 ```
 
+**Inline prompt** — no directive files on disk:
+
+```ruby
+class QuickAgent < BaseAgent
+  instructions "You are a data analyst. Use tools to complete the task."
+
+  tools { [Frai::PromptTool.for(FetchItems::Task)] }
+end
+```
+
+**Composite prompt** — multiple directive files composed via `use` (same DSL as tasks):
+
+```ruby
+class ReportAgent < BaseAgent
+  instructions do
+    use :instructions do
+      use :guidelines
+      use :tool_descriptions
+    end
+  end
+
+  tools { [...] }
+end
+```
+
+```erb
+# agents/report/directives/instructions.md.erb
+<%= use("guidelines") %>
+
+<%= use("tool_descriptions") %>
+```
+
 In `development` / `test`, `Agent.call` returns `"[dry run] AgentName: message"` without calling the LLM. In `production`, set `LLM_MODEL` and `LLM_API_KEY` — agents do not support CLI mode.
 
 ### Key concepts
 
 - `inputs :name` — declares keyword args available inside `tools do`
-- `directives do directive :name end` — declares files for `frai check` (no runtime effect)
-- `instructions` — loads `agents/<name>/directives/instructions.md.erb`
+- `instructions` — loads `agents/<name>/directives/instructions.md.erb` (file must exist; no other files allowed)
+- `instructions "..."` — inline system prompt; any file in `agents/<name>/directives/` is an error
+- `instructions do use :entry do use :sub end end` — declares directive tree for `frai check`; entry ERB can `<%= use("sub") %>` to compose the final prompt
 - `Frai::PromptTool` — wraps a task, returns `prompt_results` (rendered prompt + symbolic script refs)
 - `Frai::ScriptTool` — wraps a `llm false` task, returns `script_results` (actual script data)
 - Agents cannot be nested
@@ -890,7 +919,7 @@ Validates:
 2. All `use :x` and `run :x` resolve to real files
 3. All `mcp :x` have corresponding `mcp/x.rb`
 4. No orphan directives or scripts
-5. Agent `directive :x` files exist on disk
+5. Agent instruction files match the declared `instructions` mode (file / inline / composite)
 
 ---
 

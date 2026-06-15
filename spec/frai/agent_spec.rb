@@ -9,7 +9,6 @@ RSpec.describe Frai::Agent do
     Class.new(described_class) do
       def self.name = "DemoAgent"
 
-      directives { directive :instructions }
       instructions "Do the thing."
 
       tools { [] }
@@ -18,19 +17,19 @@ RSpec.describe Frai::Agent do
 
   before do
     stub_const("DemoAgent", agent_class)
-    FileUtils.mkdir_p(File.join(project_root, "agents", "demo", "directives"))
-    File.write(
-      File.join(project_root, "agents", "demo", "directives", "instructions.md.erb"),
-      "Instructions"
-    )
   end
 
   let(:project_root) { Dir.mktmpdir }
   after { FileUtils.rm_rf(project_root) }
 
-  describe "directives DSL" do
+  describe "instructions API" do
     it "does not override RubyLLM schema" do
       expect(agent_class.schema).to be_nil
+    end
+
+    it "rejects the removed directives DSL" do
+      expect { agent_class.directives {} }
+        .to raise_error(Frai::Error, /directives do was removed/)
     end
   end
 
