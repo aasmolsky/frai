@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "ruby_llm/tool"
+require_relative "task_tool"
 
 module Frai
   # Base class for agent tools that wrap a Frai Task and return its rendered prompt.
@@ -37,10 +37,10 @@ module Frai
   #
   #     param :llm_data, type: "object", desc: "Structured analysis"
   #
-  #     def initialize(payload) = @payload = payload
+  #     def initialize(payload) = super(payload)
   #
   #     def execute(llm_data:)
-  #       call_task(language: @payload[:language], data: @payload[:data], llm_data: llm_data)
+  #       call_task(language: state[:language], data: state[:data], llm_data: llm_data)
   #       # returns:
   #       # {
   #       #   prompt:        "You are a review analyst...\nHere is the :prepared_data...",
@@ -48,14 +48,8 @@ module Frai
   #       # }
   #     end
   #   end
-  class PromptTool < RubyLLM::Tool
+  class PromptTool < TaskTool
     class << self
-      def task(klass = nil)
-        return @task_class unless klass
-
-        @task_class = klass
-      end
-
       # Factory for the common case — LLM provides all params at call time.
       # Returns an anonymous PromptTool subclass ready to pass to `tools do`.
       #
@@ -85,14 +79,19 @@ module Frai
     #
     # @return [Hash] prompt_results
     def call_task(**params)
-      raise Frai::Error,
-        "#{self.class} must be called within an agent context. " \
-        "Use Frai::Agent.call — it sets the agent tool context for the duration of the run." unless Frai.configuration.inside_agent_tool?
+      ensure_agent_context!
 
-      instance = self.class.task.new
-      instance.call(params.any? ? params : nil)
+      instance = invoke_task(**params)
       @_prompt_results = instance.prompt_results
       prompt_results
+    end
+
+    def ensure_agent_context!
+      return if Frai.configuration.inside_agent_tool?
+
+      raise Frai::Error,
+        "#{self.class} must be called within an agent context. " \
+        "Use Frai::Agent.call — it sets the agent tool context for the duration of the run."
     end
 
     # Rendered prompt + symbolic script references from the last call_task.

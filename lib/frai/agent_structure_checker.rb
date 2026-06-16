@@ -10,6 +10,8 @@ module Frai
     end
 
     def check!
+      check_returns_tools!
+
       mode = @agent_class.instructions_mode
       return unless mode
 
@@ -21,6 +23,42 @@ module Frai
     end
 
     private
+
+    def check_returns_tools!
+      returning_tools = AgentToolsResolver.script_tools_with_returns(@agent_class)
+
+      if returning_tools.size > 1
+        names = returning_tools.map(&:name).join(", ")
+        raise Frai::Error,
+          "#{@agent_class} declares `returns` on multiple ScriptTools (#{names}).\n" \
+          "Use `returns` on one final tool only."
+      end
+
+      returning_tools.each { |tool_class| check_returns_tool!(tool_class) }
+    rescue Frai::Error
+      raise
+    rescue => e
+      raise Frai::Error,
+        "Could not inspect tools for #{@agent_class}: #{e.message}\n" \
+        "Ensure `tools do` works with nil agent inputs (for frai check)."
+    end
+
+    def check_returns_tool!(tool_class)
+      key = tool_class.returns_key
+      task_class = tool_class.task
+      unless task_class
+        raise Frai::Error,
+          "#{tool_class} declares `returns :#{key}` but has no `task`.\n" \
+          "Add `task YourTask::Task` to the ScriptTool."
+      end
+
+      allowed = TaskReturnKeys.collect(task_class, project_root: @project_root)
+      return if allowed.include?(key)
+
+      raise Frai::Error,
+        "#{tool_class} declares `returns :#{key}`, but #{task_class} does not declare that return key.\n" \
+        "Add `returns :#{key}` (or `return: :#{key}` in a directive) to the task schema."
+    end
 
     def check_file_mode!
       find_directive!(:instructions)

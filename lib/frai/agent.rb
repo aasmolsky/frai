@@ -2,6 +2,8 @@
 
 require "ruby_llm/agent"
 
+require_relative "agent_return_store"
+
 module Frai
   # Base class for all Frai agents.
   #
@@ -15,6 +17,12 @@ module Frai
   #     end
   #   end
   class Agent < RubyLLM::Agent
+    # Returned by Agent.run — bundles primary output with script result and LLM message.
+    # output  — result when set, otherwise the LLM's final response (Agent.call returns this)
+    # result  — structured value from ScriptTool#returns (script_results key), or nil
+    # message — the LLM's final response (String or Hash when schema is set)
+    AgentResult = Struct.new(:output, :result, :message, keyword_init: true)
+
     class << self
       def inherited(subclass)
         super
@@ -35,27 +43,55 @@ module Frai
         @_instructions_declaration
       end
 
-      # Runs the agent by sending an initial message and returning the response.
+      # Runs the agent and returns the primary output (script result or LLM response).
       def call(message = nil, **kwargs)
-        message = "Complete the task." if message.nil? || message.to_s.strip.empty?
+        run(message, **kwargs).output
+      end
 
-        raise Frai::Error,
-          "#{self} cannot be called from within an agent context — agents cannot be nested." if Frai.configuration.inside_agent_tool?
+      # Runs the agent and returns AgentResult with output, result, and message.
+      def run(message = nil, **kwargs)
+        message = normalize_agent_message(message)
+        ensure_not_nested!
+        ensure_structure_checked!
+        return dry_run_result(message) if Frai.configuration.dry_run?
 
-        if Frai.configuration.dry_run?
-          warn "Frai [#{Frai.configuration.env}]: dry run — agent LLM not called."
-          return "[dry run] #{name}: #{message}"
-        end
-
-        model = Frai.configuration.model
-        if model.nil? || model.to_s.strip.empty?
-          raise Frai::Error,
-            "LLM_MODEL is required for agents in production. Set LLM_MODEL in .env or config/frai.rb."
-        end
+        ensure_production_model!
 
         Frai.run_with_task_context(:agent_tool) do
-          new(model: model, **kwargs).ask(message).content
+          AgentReturnStore.with_store do
+            content = new(model: Frai.configuration.model, **kwargs).ask(message).content
+            result  = AgentReturnStore.value
+            if requires_script_return? && result.nil?
+              raise Frai::Error,
+                "#{self} expected a script return but finished without a successful `returns` tool call.\n" \
+                "Ensure the agent calls the ScriptTool with `returns`, or remove `returns` from the tool."
+            end
+
+            AgentResult.new(
+              output:  result || content,
+              result:  result,
+              message: content
+            )
+          end
         end
+      end
+
+      # True when any ScriptTool on this agent declares `returns`.
+      def requires_script_return?
+        AgentToolsResolver.script_tools_with_returns(self).any?
+      end
+
+      # Checks agent structure once per project_root (returns tools, directives).
+      # Runs automatically on Agent.run / Agent.call — same idea as Task.ensure_structure_checked!
+      def ensure_structure_checked!
+        return if @_structure_checked_for == Frai.configuration.project_root
+
+        AgentStructureChecker.new(self).check!
+        @_structure_checked_for = Frai.configuration.project_root
+      end
+
+      def reset_structure_check!
+        @_structure_checked_for = nil
       end
 
       # Mode A — load agents/<agent>/directives/instructions.md.erb
@@ -103,6 +139,31 @@ module Frai
       end
 
       private
+
+      def normalize_agent_message(message)
+        message.nil? || message.to_s.strip.empty? ? "Complete the task." : message
+      end
+
+      def ensure_not_nested!
+        return unless Frai.configuration.inside_agent_tool?
+
+        raise Frai::Error,
+          "#{self} cannot be called from within an agent context — agents cannot be nested."
+      end
+
+      def dry_run_result(message)
+        warn "Frai [#{Frai.configuration.env}]: dry run — agent LLM not called."
+        label = "[dry run] #{name}: #{message}"
+        AgentResult.new(output: label, result: nil, message: label)
+      end
+
+      def ensure_production_model!
+        model = Frai.configuration.model
+        return if model && !model.to_s.strip.empty?
+
+        raise Frai::Error,
+          "LLM_MODEL is required for agents in production. Set LLM_MODEL in .env or config/frai.rb."
+      end
 
       def render_frai_instructions(inputs, locals)
         declaration = instructions_declaration

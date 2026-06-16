@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "deep_symbolize"
+
 module Frai
   # Holds param declarations for a task directive.
   # Used via the `params` DSL block inside a directive declaration.
@@ -89,6 +91,7 @@ module Frai
     private
 
     def validate_hash_schema!(hash, schema, param_name, task_class)
+      hash   = DeepSymbolize.call(hash)
       result = schema.call(hash)
       unless result.success?
         raise Frai::InvalidParam,

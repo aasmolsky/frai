@@ -598,17 +598,19 @@ end
 
 ## Applications
 
-Stable public entrypoint — external callers always call `Application.call(...)`. No generator; create manually.
+Stable public entrypoint — external callers (Rails, scripts, other apps) call `Application.call(...)`, not raw tasks or agents.
 
 ```ruby
 # applications/application.rb
 class Application < Frai::Application
   def call(items:, language: "english")
-    data = FetchItems::Task.call(items)
-    AnalyzeItem::Task.call(language: language, data: data)
+    # Agent with returns :report on final ScriptTool → Hash
+    ReportAgent.call("Analyze the input.", payload: { items: items, language: language })
   end
 end
 ```
+
+Use a pipeline instead when the flow is fixed and you do not need an LLM orchestrator (see [Pipelines](#pipelines)).
 
 ---
 
@@ -616,15 +618,25 @@ end
 
 LLM-driven orchestrator — decides which tools to call based on intermediate results.
 
+### Agent vs Pipeline
+
+| | Pipeline | Agent |
+|---|---|---|
+| Flow | Fixed steps in Ruby | LLM chooses tools and order |
+| Typical output | Last `Task.call` value | See [Agent output](#agent-output) |
+| Best for | Known production flows | Branching, exploration, `frai exec` |
+
 ```bash
 frai ga data_analysis
 ```
+
+### Minimal agent
 
 ```ruby
 class DataAnalysisAgent < BaseAgent
   inputs :payload
 
-  instructions                    # loads instructions.md.erb as system prompt
+  instructions                    # agents/<name>/directives/instructions.md.erb
 
   tools do
     [Frai::PromptTool.for(FetchItems::Task, description: "Fetches raw data")]
@@ -632,6 +644,7 @@ class DataAnalysisAgent < BaseAgent
 end
 
 DataAnalysisAgent.call("Analyze the input.", payload: data)
+# => String (LLM message) — no ScriptTool with returns
 ```
 
 **Inline prompt** — no directive files on disk:
@@ -666,28 +679,125 @@ end
 <%= use("tool_descriptions") %>
 ```
 
-In `development` / `test`, `Agent.call` returns `"[dry run] AgentName: message"` without calling the LLM. In `production`, set `LLM_MODEL` and `LLM_API_KEY` — agents do not support CLI mode.
+### Agent output
+
+Every agent run produces:
+
+1. **Tool results** — structured objects from `ScriptTool` (`script_results`)
+2. **LLM message** — final orchestrator text (`ask(...).content`)
+
+`Agent.call` returns:
+
+| Situation | `Agent.call` returns |
+|---|---|
+| Dry run (`FRAI_ENV=development` / `test`) | `"[dry run] AgentName: message"` — tools are **not** executed |
+| No `returns` on any `ScriptTool` | LLM final message (`String` or schema `Hash`) |
+| One `ScriptTool` with `returns :key` ran successfully | `script_results[key]` (e.g. `Hash`) — **not** the LLM message |
+| `returns` declared but that tool never ran | `Frai::Error` |
+
+Use `Agent.run` when you need both channels:
+
+```ruby
+out = ReportAgent.run("Analyze.", payload: data)
+out.output   # same as Agent.call
+out.result   # script return value, or nil
+out.message  # LLM final message always
+```
+
+**Do not** ask the LLM to echo JSON that a script already built — declare `returns` on the final `ScriptTool` instead.
+
+### `returns` on ScriptTool
+
+For agents that must return structured data to Ruby (`Application.call`, Rails):
+
+```ruby
+class BuildReportTool < Frai::ScriptTool
+  task BuildReport::Task
+  returns :report    # must match return: :report / returns :report in the task schema
+
+  description "Assembles the final report."
+
+  def execute(data:, narrative:)
+    call_task(data: data, llm_data: narrative)
+  end
+end
+```
+
+When `call_task` runs, frai captures `script_results[:report]`; `Agent.call` returns that object.
+
+Rules (enforced by `frai check` and on every `Agent.call` / `frai exec`):
+
+- **One** `ScriptTool` with `returns` per agent
+- `returns :key` must match the task directive (`returns :key` or `return: :key`)
+- Intermediate tools (`PromptTool`, other `ScriptTool`) — no `returns`
+
+### Run flow
+
+```
+Agent.call(message, **inputs)
+  → ensure_structure_checked!   # same agent rules as frai check
+  → LLM orchestrator loop
+      PromptTool  → prompt for LLM to read / follow
+      ScriptTool  → script_results (llm false tasks)
+  → if returns tool ran → return script_results[key]
+     else              → return LLM message
+```
+
+Tasks inside `Agent.call` as tools skip their own LLM call — the orchestrator handles LLM steps.
 
 ### Key concepts
 
-- `inputs :name` — declares keyword args available inside `tools do`
+- `inputs :name` — keyword args available inside `tools do` (e.g. `payload`)
 - `instructions` — loads `agents/<name>/directives/instructions.md.erb` (file must exist; no other files allowed)
 - `instructions "..."` — inline system prompt; any file in `agents/<name>/directives/` is an error
-- `instructions do use :entry do use :sub end end` — declares directive tree for `frai check`; entry ERB can `<%= use("sub") %>` to compose the final prompt
-- `Frai::PromptTool` — wraps a task, returns `prompt_results` (rendered prompt + symbolic script refs)
-- `Frai::ScriptTool` — wraps a `llm false` task, returns `script_results` (actual script data)
+- `instructions do use :entry … end` — composite tree for `frai check`; ERB composes via `<%= use("sub") %>`
+- `Frai::TaskTool` — shared base for `PromptTool` / `ScriptTool`; deep-symbolizes LLM tool args
+- `Frai::PromptTool` — rendered prompt + symbolic script refs (`prompt_results`)
+- `Frai::ScriptTool` — actual script data (`script_results`); optional `returns :key` for agent output
 - Agents cannot be nested
+
+### Environments
+
+In `development` / `test`, dry run: no LLM, no tools — structure check still runs.
+
+In `production`, set `LLM_MODEL` and `LLM_API_KEY` — agents do not support CLI-only mode.
 
 ### PromptTool and ScriptTool
 
-Each tool has a single responsibility:
+Both inherit from `Frai::TaskTool`, which normalizes LLM tool arguments before your `execute` method runs.
 
-| Tool | Returns | Use when |
+| Tool | `execute` returns | Use when |
 |---|---|---|
-| `PromptTool` | `prompt_results` — `{ prompt: "...", script_key: :script_key }` | Agent should read and reason over the prompt |
-| `ScriptTool` | `script_results` — `{ script_key: { actual data } }` | Agent needs raw data (e.g. to pass to another tool) |
+| `PromptTool` | `prompt_results` — `{ prompt: "…", script_key: :key }` | Agent should read a prompt and use the LLM |
+| `ScriptTool` | `script_results` — `{ key: { data } }` | Deterministic scripts (`llm false`); add `returns` on the **final** tool |
 
-Pair them on the **same task** when the agent needs both:
+**Argument normalization:** LLM providers pass JSON with string keys at every nesting level. `TaskTool` deep-symbolizes Hash and Array values in `#call` (LLM → `execute`) and in `#call_task` (tool → Task). Task param schemas (dry-schema) expect symbol keys — you do not need manual `deep_symbolize` in each tool.
+
+**Constructor state:** pass payload to `super` — it is stored as `#state` (deep-symbolized):
+
+```ruby
+def initialize(payload)
+  super(payload)
+end
+
+def execute(llm_data:)
+  call_task(language: state[:language], llm_data: llm_data)
+end
+```
+
+**Custom per-param transforms:** override `#normalize_param` (value is already deep-symbolized):
+
+```ruby
+def normalize_param(name, value)
+  value = super
+  return value[:report_input] if name == :data && value.is_a?(Hash) && value.key?(:report_input)
+  value
+end
+```
+
+Outside tools, use `Frai.deep_symbolize(value)` when normalizing JSON-like data.
+
+Pair `PromptTool` and `ScriptTool` on the **same task** when the agent needs both:
 
 ```ruby
 # PromptTool — agent reads the prompt
@@ -697,31 +807,31 @@ class GetReportPromptTool < Frai::PromptTool
 
   param :llm_data, type: "object", desc: "Structured analysis from previous step"
 
-  def initialize(payload) = @payload = payload
+  def initialize(payload) = super(payload)
 
   def execute(llm_data:)
-    call_task(language: @payload[:language], data: @payload[:data], llm_data: llm_data)
+    call_task(language: state[:language], data: state[:data], llm_data: llm_data)
     # => { prompt: "Write a report about :prepared_data...", prepared_data: :prepared_data }
   end
 end
 
-# ScriptTool — agent gets actual data
+# ScriptTool — agent gets actual data (add returns :report on the *final* assembly tool, not here)
 class GetReportDataTool < Frai::ScriptTool
   task PrepareReport::Task
-  description "Returns prepared analysis data. Provides the prepared_data for build_report."
+  description "Returns prepared analysis data."
 
   param :llm_data, type: "object", desc: "Structured analysis from previous step"
 
-  def initialize(payload) = @payload = payload
+  def initialize(payload) = super(payload)
 
   def execute(llm_data:)
-    call_task(language: @payload[:language], data: @payload[:data], llm_data: llm_data)
+    call_task(language: state[:language], data: state[:data], llm_data: llm_data)
     # => { prepared_data: { item_id: "...", score: 42, ... } }
   end
 end
 ```
 
-The agent connects them by matching key names: `:prepared_data` in `prompt_results` signals that `script_results[:prepared_data]` has the corresponding data.
+`:prepared_data` in `prompt_results` signals that `script_results[:prepared_data]` holds the matching data.
 
 ### Custom PromptTool with constructor injection
 
@@ -731,11 +841,11 @@ class BatchPromptTool < Frai::PromptTool
   description "Generates batch analysis prompt"
 
   def initialize(payload)
-    @payload = payload
+    super(payload)
   end
 
   def execute
-    call_task(item_id: @payload[:item_id], items: @payload[:items])
+    call_task(item_id: state[:item_id], items: state[:items])
   end
 end
 ```
@@ -920,6 +1030,9 @@ Validates:
 3. All `mcp :x` have corresponding `mcp/x.rb`
 4. No orphan directives or scripts
 5. Agent instruction files match the declared `instructions` mode (file / inline / composite)
+6. **Agents:** at most one `ScriptTool` with `returns`; `returns :key` matches the task schema
+
+`Agent.call` and `frai exec` on an agent run the same structure check (once per project root) before executing.
 
 ---
 
@@ -962,7 +1075,7 @@ RSpec.describe AnalyzeItem::Task do
 end
 ```
 
-**Agents** — `.call` returns a dry-run stub:
+**Agents** — dry run returns a stub (`AgentResult` from `run`):
 
 ```ruby
 RSpec.describe DataAnalysisAgent do
@@ -972,6 +1085,8 @@ RSpec.describe DataAnalysisAgent do
   end
 end
 ```
+
+For structured output, test the `returns` tool / task directly, or stub `ask` and run the tool in the agent loop.
 
 ---
 
@@ -1008,8 +1123,8 @@ require_relative Rails.root.join("lib/ai_project/config/frai")
 ```
 
 ```ruby
-# Anywhere in Rails:
-result = Application.call(reviews: data)
+# Anywhere in Rails — Hash when agent has returns on final ScriptTool:
+result = Application.call(items: data, language: "en")
 ```
 
 ---
@@ -1041,7 +1156,9 @@ rm -rf my_project
 | `UndeclaredDirective` / `UndeclaredScript` | Declare `use :x` / `run :x` in `schema do` |
 | `LLM_API_KEY is not set` | Set `LLM_API_KEY` when `LLM_MODEL` is set; or leave `LLM_MODEL` empty for CLI mode (tasks only) |
 | Agent fails without API key in production | Agents require `LLM_MODEL` and `LLM_API_KEY` — CLI mode applies to standalone tasks, not agents |
-| `agents cannot be nested` | Use `Frai::PromptTool` to call tasks, not other agents |
+| `expected a script return` from agent | `returns` on a tool but LLM did not call it — fix instructions or use a pipeline |
+| `multiple ScriptTools` with `returns` | Only one `ScriptTool` may declare `returns` per agent |
+| `agents cannot be nested` | Use `Frai::PromptTool` / `ScriptTool`, not other agents |
 | `Unsupported script extension` | Only `.rb`, `.py`, `.js`, `.php`, `.ts`, `.sh` are supported |
 | `uninitialized constant MyTask` | Use `MyTask::Task` (not `MyTask`) with `frai exec` |
 | `rspec` not found | Run `gem install frai` — rspec is bundled |

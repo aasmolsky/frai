@@ -13,6 +13,8 @@ require_relative "frai/directive_declaration"
 # Structure validation
 require_relative "frai/structure_checker"
 require_relative "frai/agent_structure_checker"
+require_relative "frai/task_return_keys"
+require_relative "frai/agent_tools_resolver"
 
 # Runtime — rendering and script execution
 require_relative "frai/script_runner"
@@ -27,6 +29,7 @@ require_relative "frai/setup/commands"
 # Adapters — null always loaded; ruby_llm loaded lazily when model is configured
 require_relative "frai/llm"
 require_relative "frai/adapters/null"
+require_relative "frai/deep_symbolize"
 require_relative "frai/json_response"
 
 # Domain objects
@@ -35,6 +38,7 @@ require_relative "frai/pipeline"
 require_relative "frai/agent"
 
 # Tools (used by agents to call tasks as prompt generators)
+require_relative "frai/task_tool"
 require_relative "frai/prompt_tool"
 require_relative "frai/script_tool"
 

@@ -31,6 +31,74 @@ RSpec.describe Frai::AgentStructureChecker do
     File.write(full_path, content)
   end
 
+  describe "returns tools" do
+    let(:task_class) do
+      Class.new(Frai::Task) do
+        def self.name = "BuildReport::Task"
+
+        schema do
+          llm false
+          output Hash
+
+        directive :task do
+          run :report do
+            returns :report, type: Hash do
+              required(:status).filled(:string)
+            end
+          end
+        end
+        end
+      end
+    end
+
+    let(:report_tool_class) do
+      task = task_class
+      Class.new(Frai::ScriptTool) do
+        define_singleton_method(:name) { "BuildReportTool" }
+        task task
+        returns :report
+      end
+    end
+
+    before do
+      write_file("agents/review_analysis/directives/instructions.md.erb")
+      agent_class.instructions
+      tool = report_tool_class
+      agent_class.tools { [tool.new] }
+    end
+
+    it "does not raise when returns key matches the task schema" do
+      expect { checker.check! }.not_to raise_error
+    end
+
+    it "raises when multiple ScriptTools declare returns" do
+      first = report_tool_class
+      task = task_class
+      second = Class.new(Frai::ScriptTool) do
+        define_singleton_method(:name) { "OtherReportTool" }
+        task task
+        returns :report
+      end
+      agent_class.tools { [first.new, second.new] }
+
+      expect { checker.check! }
+        .to raise_error(Frai::Error, /multiple ScriptTools/)
+    end
+
+    it "raises when returns key is missing from the task schema" do
+      task = task_class
+      missing_tool = Class.new(Frai::ScriptTool) do
+        define_singleton_method(:name) { "MissingKeyTool" }
+        task task
+        returns :missing
+      end
+      agent_class.tools { [missing_tool.new] }
+
+      expect { checker.check! }
+        .to raise_error(Frai::Error, /does not declare that return key/)
+    end
+  end
+
   describe "#check!" do
     context "when no instructions mode is declared" do
       it "does not raise" do

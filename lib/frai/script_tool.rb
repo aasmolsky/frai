@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
-require "ruby_llm/tool"
+require_relative "task_tool"
+require_relative "agent_return_store"
 
 module Frai
   # Base class for agent tools that wrap a Frai Task with `llm false`.
@@ -12,25 +13,26 @@ module Frai
   # but the default return value is script_results.
   #
   # @example
-  #   class BuildReportTool < Frai::ScriptTool
-  #     task BuildReport::Task
-  #     description "Builds the final report from prepared data and LLM output."
+  #   class AssembleOutputTool < Frai::ScriptTool
+  #     task AssembleOutput::Task
+  #     returns :output
+  #     description "Runs the final assembly step and returns structured output."
   #
-  #     def initialize(payload)
-  #       @payload = payload
-  #     end
-  #
-  #     def execute(prepared_data:, llm_report:)
-  #       call_task(data: prepared_data, llm_data: llm_report)
-  #       # returns script_results => { report: { item_id: "...", ... } }
+  #     def execute(data:)
+  #       call_task(data: data)
+  #       # => { output: { status: "ok", ... } }
   #     end
   #   end
-  class ScriptTool < RubyLLM::Tool
+  class ScriptTool < TaskTool
     class << self
-      def task(klass = nil)
-        return @task_class unless klass
+      # Marks a script_results key as the agent return value (Agent.run#result / Agent.call output).
+      # Must match return: :key in the task schema run(...) directive.
+      def returns(key)
+        @returns_key = key.to_sym
+      end
 
-        @task_class = klass
+      def returns_key
+        @returns_key
       end
     end
 
@@ -41,10 +43,10 @@ module Frai
     #
     # @return [Hash{Symbol => Object}] script_results
     def call_task(**params)
-      instance = self.class.task.new
-      instance.call(params.any? ? params : nil)
+      instance = invoke_task(**params)
       @_script_results = instance.script_results
       @_prompt_results = instance.prompt_results
+      capture_return!
       script_results
     end
 
@@ -58,6 +60,14 @@ module Frai
     # @return [Hash{Symbol => Object}]
     def prompt_results
       @_prompt_results || {}
+    end
+
+    def capture_return!
+      key = self.class.returns_key
+      return unless key
+
+      value = script_results[key]
+      AgentReturnStore.capture(value) unless value.nil?
     end
   end
 end

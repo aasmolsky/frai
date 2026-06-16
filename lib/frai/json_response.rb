@@ -2,6 +2,8 @@
 
 require "json"
 
+require_relative "deep_symbolize"
+
 module Frai
   # Normalizes LLM structured output to a validated Hash.
   #
@@ -76,7 +78,7 @@ module Frai
       def coerce_to_hash(content, strict:, attempt:, task_class:)
         case content
         when Hash
-          symbolize_keys(content)
+          DeepSymbolize.call(content)
         when String
           parse_string!(content, strict: strict, attempt: attempt, task_class: task_class)
         else
@@ -119,19 +121,6 @@ module Frai
 
       def parse_error(message, raw:, attempt:, task_class:)
         JsonParseError.new(message, raw: raw, attempt: attempt, task_class: task_class)
-      end
-
-      def symbolize_keys(value)
-        case value
-        when Hash
-          value.each_with_object({}) do |(key, nested), hash|
-            hash[key.to_sym] = symbolize_keys(nested)
-          end
-        when Array
-          value.map { |item| symbolize_keys(item) }
-        else
-          value
-        end
       end
     end
   end
