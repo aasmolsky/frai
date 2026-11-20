@@ -56,6 +56,7 @@ module Frai
           ".env.erb"                      => ".env",
           ".env.example.erb"              => ".env.example",
           ".gitignore.erb"                => ".gitignore",
+          "Gemfile.erb"                   => "Gemfile",
         }
 
         templates.each do |template, target|
@@ -72,6 +73,15 @@ module Frai
         File.write(dest, result)
       end
 
+      # Gemfile line for the frai gem. Set FRAI_GEM_PATH to a local checkout
+      # to develop against it instead of the released version.
+      def frai_gem_line
+        path = ENV["FRAI_GEM_PATH"]
+        return %(gem "frai", path: "#{path}") if path && !path.empty?
+
+        %(gem "frai", "~> #{Frai::VERSION}")
+      end
+
       # Override: prefix every path with the project name for clarity.
       def say_create(path)
         puts "  \e[32mcreate\e[0m  #{@project_name}/#{path}"
@@ -83,6 +93,7 @@ module Frai
         puts ""
         puts "  Next steps:"
         puts "    cd #{@project_name}"
+        puts "    bundle install           # installs frai into this project's own Gemfile"
         puts "    cp .env.example .env     # fill in your API keys"
         puts "    frai setup --claude      # optional: Claude CLI (MCPs + slash commands)"
         puts "    frai setup --codex       # optional: Codex CLI (MCP registration)"

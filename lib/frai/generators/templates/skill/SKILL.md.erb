@@ -1,0 +1,40 @@
+---
+name: <%= skill_name %>
+description: <%= description.to_json %>
+---
+
+# Frai tasks
+
+Run tasks through the Frai wrapper. Run the command from the Rails app root (the folder that contains `.claude/`).
+
+Command template:
+
+```bash
+<%= wrapper_path %> exec <CLASS_NAME> "<ARGUMENTS>"
+```
+
+Arguments use the `name(value)` format, for example `query(hello world)`. Values that look like JSON `{...}` or `[...]` are parsed as Hash or Array.
+
+Rules:
+- Pass the arguments exactly as the user gave them. Do not invent or transform values.
+- If the command fails, report the error to the user and stop. Do not retry with guessed parameters.
+
+## Tasks
+
+<% tasks.each do |task| -%>
+### <%= task.name %>
+
+Command: `<%= wrapper_path %> exec <%= task.class_name %> "<ARGUMENTS>"`
+
+<% if task.required.empty? && task.optional.empty? -%>
+No parameters.
+<% else -%>
+<% task.required.each do |param| -%>
+- `<%= param[:name] %>` (<%= param[:type] %>, required)
+<% end -%>
+<% task.optional.each do |param| -%>
+- `<%= param[:name] %>` (<%= param[:type] %>, optional<%= param[:default].nil? ? "" : ", default: #{param[:default].inspect}" %>)
+<% end -%>
+<% end -%>
+
+<% end -%>
