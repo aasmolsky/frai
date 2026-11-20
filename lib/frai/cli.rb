@@ -5,6 +5,7 @@ require "fileutils"
 require "json"
 require "erb"
 require_relative "setup/mcp"
+require_relative "setup/skill"
 require_relative "generators/base_generator"
 require_relative "generators/new_generator"
 require_relative "generators/task_generator"
@@ -211,14 +212,16 @@ module Frai
     option :claude, type: :boolean, desc: "Claude CLI: MCPs + slash commands"
     option :codex,  type: :boolean, desc: "Codex CLI: MCP registration"
     option :cursor, type: :boolean, desc: "Cursor: .cursor/mcp.json"
+    option :skill,  type: :string,  desc: "Write a SKILL.md for all tasks into DIR (e.g. ../.claude/skills/ai-tasks)"
     def setup
-      unless options[:claude] || options[:codex] || options[:cursor]
+      unless options[:claude] || options[:codex] || options[:cursor] || options[:skill]
         abort <<~MSG
           Error: specify a setup target.
 
             frai setup --claude   # Claude CLI: MCPs + slash commands
             frai setup --codex    # Codex CLI: MCP registration
             frai setup --cursor   # Cursor: .cursor/mcp.json
+            frai setup --skill DIR  # Claude Code skill (SKILL.md) for the host app
 
           Combine targets: frai setup --claude --cursor
         MSG
@@ -230,6 +233,7 @@ module Frai
       setup_claude(servers) if options[:claude]
       setup_codex(servers)  if options[:codex]
       setup_cursor(servers) if options[:cursor]
+      setup_skill(options[:skill]) if options[:skill]
     end
 
     desc "console", "Start an interactive console with the project loaded"
@@ -465,6 +469,16 @@ module Frai
 
       File.write(settings_file, JSON.pretty_generate(settings))
       puts "  \e[32mupdate\e[0m  .claude/settings.local.json (MCP approvals disabled)"
+    end
+
+    def setup_skill(skill_dir)
+      Frai::Setup::Skill.sync!(
+        project_root: Dir.pwd,
+        skill_dir:    skill_dir,
+        task_classes: task_classes
+      )
+      puts ""
+      puts "  \e[32m✓\e[0m Skill written. Restart Claude CLI to apply."
     end
 
     def sync_commands

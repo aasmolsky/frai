@@ -25,6 +25,8 @@ require_relative "frai/mcp"
 require_relative "frai/mcp_oauth_storage"
 require_relative "frai/setup/mcp"
 require_relative "frai/setup/commands"
+require_relative "frai/setup/skill"
+require_relative "frai/agent_deliverable"
 
 # Adapters — null always loaded; ruby_llm loaded lazily when model is configured
 require_relative "frai/llm"
